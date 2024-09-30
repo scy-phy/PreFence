@@ -1,0 +1,321 @@
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 77f01ac38..10dfcf0ff 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1536,6 +1536,8 @@ struct task_struct {
+ 	struct user_event_mm		*user_event_mm;
+ #endif
+ 
++	unsigned short			prefetch_disable;
++
+ 	/*
+ 	 * New fields for task_struct should be added above here, so that
+ 	 * they are included in the randomized portion of task_struct.
+diff --git a/include/uapi/linux/prctl.h b/include/uapi/linux/prctl.h
+index 370ed14b1..f5e7bdb80 100644
+--- a/include/uapi/linux/prctl.h
++++ b/include/uapi/linux/prctl.h
+@@ -306,4 +306,8 @@ struct prctl_mm_map {
+ # define PR_RISCV_V_VSTATE_CTRL_NEXT_MASK	0xc
+ # define PR_RISCV_V_VSTATE_CTRL_MASK		0x1f
+ 
++/* Control prefetch_disable flag */
++#define PR_SET_PREFETCH_DISABLE		128
++#define PR_GET_PREFETCH_DISABLE		129
++
+ #endif /* _LINUX_PRCTL_H */
+diff --git a/init/init_task.c b/init/init_task.c
+index ff6c4b9bf..d2cb16397 100644
+--- a/init/init_task.c
++++ b/init/init_task.c
+@@ -210,6 +210,7 @@ struct task_struct init_task
+ #ifdef CONFIG_SECCOMP_FILTER
+ 	.seccomp	= { .filter_count = ATOMIC_INIT(0) },
+ #endif
++	.prefetch_disable = 0,
+ };
+ EXPORT_SYMBOL(init_task);
+ 
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index a854b7183..447f36689 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -5321,6 +5321,15 @@ asmlinkage __visible void schedule_tail(struct task_struct *prev)
+ 	calculate_sigpending();
+ }
+ 
++#define CPUACTLR_EL1 "S3_1_c15_c2_0"
++
++#define DISABLE_LOAD_STORE_HW_PF (1ULL<<56)
++#define L1_L2_PREFETCH_CROSS_4KB (1ULL<<47)
++#define LOAD_STORE_HW_PF_USE_VA (1ULL<<43)
++#define DISABLE_PF_READUNIQUE (1ULL<<42)
++#define DISABLE_L1I_PREFETCH (1ULL<<32)
++#define DISABLE_L2_TLB_PREFETCH (1ULL<<21)
++
+ /*
+  * context_switch - switch to the new MM and the new thread's register state.
+  */
+@@ -5380,6 +5389,118 @@ context_switch(struct rq *rq, struct task_struct *prev,
+ 
+ 	prepare_lock_switch(rq, next, rf);
+ 
++	/* ARM prefetcher control */
++
++	// u64 trace_time = ktime_get_ns();
++	// u32 trace_msgcnt = 0;
++	// if (
++	// 	(next->prefetch_disable == 0 && prev->prefetch_disable == 1)
++	// 	|| (next->prefetch_disable == 1 && prev->prefetch_disable == 0)
++	// 	|| (next->prefetch_disable == 1 && prev->prefetch_disable == 1)
++	// ) {
++	// 	trace_printk(
++	// 		"[%llu-%u]" "core.c PID %d->%d CPU %d, flag %u->%u, OLD mask: %*pbl\n",
++	// 		trace_time, trace_msgcnt++,
++	// 		prev->pid, next->pid, smp_processor_id(), prev->prefetch_disable, next->prefetch_disable,
++	// 		cpumask_pr_args(&prefetch_disable_cpumask)
++	// 	);
++	// }
++
++	// /* 0. Update global cpumask */
++	// if (next->prefetch_disable) {
++	// 	cpumask_set_cpu(smp_processor_id(), &prefetch_disable_cpumask);
++	// } else {
++	// 	cpumask_clear_cpu(smp_processor_id(), &prefetch_disable_cpumask);
++	// }
++
++	// if (
++	// 	(next->prefetch_disable == 0 && prev->prefetch_disable == 1)
++	// 	|| (next->prefetch_disable == 1 && prev->prefetch_disable == 0)
++	// 	|| (next->prefetch_disable == 1 && prev->prefetch_disable == 1)
++	// ) {
++	// 	trace_printk(
++	// 		"[%llu-%u]" "core.c PID %d->%d CPU %d, flag %u->%u, NEW mask: %*pbl\n",
++	// 		trace_time, trace_msgcnt++,
++	// 		prev->pid, next->pid, smp_processor_id(), prev->prefetch_disable, next->prefetch_disable,
++	// 		cpumask_pr_args(&prefetch_disable_cpumask)
++	// 	);
++	// }
++
++	/* 1. Read current state */
++	// TODO: check for (supported) ARM machine first.
++	u64 msr_old = 0, msr_new = 0;
++	asm volatile("MRS %0, " CPUACTLR_EL1 : "=r" (msr_old));
++	msr_new = msr_old;
++
++	/* 2. Compute target state */
++	// Check whether any process on the current process's physical core
++	// requests prefetch_disable (using the global cpumask)
++	// - Get the siblings of the current cpu. In early boot stages,
++	//   topology_sibling_cpumask may not be initialized yet. Skip prefetch
++	//   control in that case.
++	// cpumask_t* sibling_cpumask = topology_sibling_cpumask(smp_processor_id());
++	// if (sibling_cpumask == NULL) {
++	// 	goto skip_prefetch_control;
++	// }
++	// - Compute siblings map AND disable map. The resulting bitmap has
++	//   bits set where processes (a) request prefetch_disable AND (b) are
++	//   on the same physical core.
++	// cpumask_t pf_disable_sibling_cpumask;
++	// cpumask_and(&pf_disable_sibling_cpumask, sibling_cpumask, &prefetch_disable_cpumask);
++	// - Determine whether the resulting vector is all zero (then we don't
++	//   need prefetch_disable) or not (then we need it).
++	// unsigned int first_set = cpumask_first(&pf_disable_sibling_cpumask);
++	if (next->prefetch_disable) {
++		msr_new |= DISABLE_LOAD_STORE_HW_PF;
++		// msr_new |= L1_L2_PREFETCH_CROSS_4KB;
++		// msr_new |= LOAD_STORE_HW_PF_USE_VA;
++		msr_new |= DISABLE_PF_READUNIQUE;
++		msr_new |= DISABLE_L1I_PREFETCH;
++		msr_new |= DISABLE_L2_TLB_PREFETCH;
++	} else {
++		msr_new &= ~DISABLE_LOAD_STORE_HW_PF;
++		// msr_new &= ~L1_L2_PREFETCH_CROSS_4KB;
++		// msr_new &= ~LOAD_STORE_HW_PF_USE_VA;
++		msr_new &= ~DISABLE_PF_READUNIQUE;
++		msr_new &= ~DISABLE_L1I_PREFETCH;
++		msr_new &= ~DISABLE_L2_TLB_PREFETCH;
++	}
++
++	/* 3. Write target state */
++	if (msr_new != msr_old) {
++		// trace_printk(
++		// 	"[%llu-%u]" "core.c PID %d->%d CPU %d, flag %u->%u, Changing state to %u...\n",
++		// 	trace_time, trace_msgcnt++,
++		// 	prev->pid, next->pid, smp_processor_id(), prev->prefetch_disable, next->prefetch_disable,
++		// 	msr_lo_target
++		// );
++		asm volatile("MSR " CPUACTLR_EL1 ", %0" : : "r" (msr_new));
++		// /* Re-read prefetcher state */
++		// asm volatile(
++		// 	"movl $0x1A4, %%ecx\n"
++		// 	"rdmsr\n"
++		// 	"movl %%edx, %[msr_hi]\n"
++		// 	"movl %%eax, %[msr_lo]\n"
++		// 	: [msr_hi] "=r" (msr_hi), [msr_lo] "=r" (msr_lo) /* output */
++		// 	: /* input */
++		// 	: "ecx", "edx", "eax" /* clobbered */
++		// );
++		// if (msr_lo != msr_lo_target) {
++		// 	trace_printk(
++		// 		"[%llu-%u]" "core.c PID %d->%d CPU %d, flag %u->%u, Changing prefetcher state failed! Expected: %u, got: %u\n",
++		// 		trace_time, trace_msgcnt++,
++		// 		prev->pid, next->pid, smp_processor_id(), prev->prefetch_disable, next->prefetch_disable,
++		// 		msr_lo_target, msr_lo
++		// 	);
++		// } else {
++		// 	trace_printk(
++		// 		"[%llu-%u]" "core.c PID %d->%d CPU %d, flag %u->%u, Changing state succeeded.\n",
++		// 		trace_time, trace_msgcnt++,
++		// 		prev->pid, next->pid, smp_processor_id(), prev->prefetch_disable, next->prefetch_disable
++		// 	);
++		// }
++	}
++
+ 	/* Here we just switch the register state and the stack. */
+ 	switch_to(prev, next, prev);
+ 	barrier();
+diff --git a/kernel/sys.c b/kernel/sys.c
+index 7a4ae6d5a..cf77a9514 100644
+--- a/kernel/sys.c
++++ b/kernel/sys.c
+@@ -2429,6 +2429,119 @@ static int prctl_get_auxv(void __user *addr, unsigned long len)
+ 	return sizeof(mm->saved_auxv);
+ }
+ 
++/* ARM prefetcher control */
++#define CPUACTLR_EL1 "S3_1_c15_c2_0"
++
++#define DISABLE_LOAD_STORE_HW_PF (1ULL<<56)
++#define L1_L2_PREFETCH_CROSS_4KB (1ULL<<47)
++#define LOAD_STORE_HW_PF_USE_VA (1ULL<<43)
++#define DISABLE_PF_READUNIQUE (1ULL<<42)
++#define DISABLE_L1I_PREFETCH (1ULL<<32)
++#define DISABLE_L2_TLB_PREFETCH (1ULL<<21)
++
++static void set_arm_prefetch(void *v_current) {
++	u64 msr_old = 0, msr_new = 0;
++	struct task_struct *t_current = (struct task_struct *)v_current;
++
++	// u64 trace_time = ktime_get_ns();
++	// u32 trace_msgcnt = 0;
++
++	// trace_printk(
++	// 	"[%llu-%u]" "sys.c PID %d CPU %d flag %u, OLD mask: %*pbl\n",
++	// 	trace_time, trace_msgcnt++,
++	// 	t_current->pid, smp_processor_id(), t_current->prefetch_disable,
++	// 	cpumask_pr_args(&prefetch_disable_cpumask)
++	// );
++
++	// /* 0. Update global cpumask */
++	// if (t_current->prefetch_disable) {
++	// 	cpumask_set_cpu(task_cpu(t_current), &prefetch_disable_cpumask);
++	// } else {
++	// 	cpumask_clear_cpu(task_cpu(t_current), &prefetch_disable_cpumask);
++	// }
++
++	// trace_printk(
++	// 	"[%llu-%u]" "sys.c PID %d CPU %d flag %u, NEW mask: %*pbl\n",
++	// 	trace_time, trace_msgcnt++,
++	// 	t_current->pid, smp_processor_id(), t_current->prefetch_disable,
++	// 	cpumask_pr_args(&prefetch_disable_cpumask)
++	// );
++
++	/* 1. Read current state */
++	// TODO: check for (supported) ARM machine first.
++	asm volatile("MRS %0, " CPUACTLR_EL1 : "=r" (msr_old));
++	msr_new = msr_old;
++
++	/* 2. Compute target state */
++	// Check whether any process on the current process's physical core
++	// requests prefetch_disable (using the global cpumask)
++	// - Get the siblings of the current cpu
++	// cpumask_t* sibling_cpumask = topology_sibling_cpumask(task_cpu(t_current));
++	// - Compute siblings map AND disable map. The resulting bitmap has
++	//   bits set where processes (a) request prefetch_disable AND (b) are
++	//   on the same physical core.
++	// cpumask_t pf_disable_sibling_cpumask;
++	// cpumask_and(&pf_disable_sibling_cpumask, sibling_cpumask, &prefetch_disable_cpumask);
++	// - Determine whether the resulting vector is all zero (then we don't
++	//   need prefetch_disable) or not (then we need it).
++	// unsigned int first_set = cpumask_first(&pf_disable_sibling_cpumask);
++	if (t_current->prefetch_disable) {
++		msr_new |= DISABLE_LOAD_STORE_HW_PF;
++		// msr_new |= L1_L2_PREFETCH_CROSS_4KB;
++		// msr_new |= LOAD_STORE_HW_PF_USE_VA;
++		msr_new |= DISABLE_PF_READUNIQUE;
++		msr_new |= DISABLE_L1I_PREFETCH;
++		msr_new |= DISABLE_L2_TLB_PREFETCH;
++	} else {
++		msr_new &= ~DISABLE_LOAD_STORE_HW_PF;
++		// msr_new &= ~L1_L2_PREFETCH_CROSS_4KB;
++		// msr_new &= ~LOAD_STORE_HW_PF_USE_VA;
++		msr_new &= ~DISABLE_PF_READUNIQUE;
++		msr_new &= ~DISABLE_L1I_PREFETCH;
++		msr_new &= ~DISABLE_L2_TLB_PREFETCH;
++	}
++
++	/* 3. Write target state */
++	if (msr_new != msr_old) {
++		// trace_printk(
++		// 	"[%llu-%u]" "sys.c PID %d CPU %d flag %u, Changing prefetcher state to %u...\n",
++		// 	trace_time, trace_msgcnt++,
++		// 	t_current->pid, smp_processor_id(), t_current->prefetch_disable,
++		// 	msr_lo_target
++		// );
++		asm volatile("MSR " CPUACTLR_EL1 ", %0" : : "r" (msr_new));
++		// /* Re-read prefetcher state */
++		// asm volatile(
++		// 	"movl $0x1A4, %%ecx\n"
++		// 	"rdmsr\n"
++		// 	"movl %%edx, %[msr_hi]\n"
++		// 	"movl %%eax, %[msr_lo]\n"
++		// 	: [msr_hi] "=r" (msr_hi), [msr_lo] "=r" (msr_lo) /* output */
++		// 	: /* input */
++		// 	: "ecx", "edx", "eax" /* clobbered */
++		// );
++		// if (msr_lo != msr_lo_target) {
++		// 	trace_printk(
++		// 		"[%llu-%u]" "sys.c PID %d CPU %d flag %u, Changing prefetcher state failed! Expected: %u, got: %u\n",
++		// 		trace_time, trace_msgcnt++,
++		// 		t_current->pid, smp_processor_id(), t_current->prefetch_disable,
++		// 		msr_lo_target, msr_lo
++		// 	);
++		// } else {
++		// 	trace_printk(
++		// 		"[%llu-%u]" "sys.c PID %d CPU %d flag %u, Changing prefetcher state succeeded.\n",
++		// 		trace_time, trace_msgcnt++,
++		// 		t_current->pid, smp_processor_id(), t_current->prefetch_disable
++		// 	);
++		// }
++	}
++	// trace_printk(
++	// 	"[%llu-%u]" "sys.c PID %d CPU %d flag %u, Done.\n",
++	// 	trace_time, trace_msgcnt++,
++	// 	t_current->pid, smp_processor_id(), t_current->prefetch_disable
++	// );
++}
++
+ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
+ 		unsigned long, arg4, unsigned long, arg5)
+ {
+@@ -2744,6 +2857,19 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
+ 	case PR_RISCV_V_GET_CONTROL:
+ 		error = RISCV_V_GET_CONTROL();
+ 		break;
++	case PR_SET_PREFETCH_DISABLE:
++		// preempt_disable();
++		// trace_printk(
++		// 	KERN_INFO "sys.c PR_SET_PREFETCH_DISABLE handler for PID %d. User CPU: %d, Kernel CPU %d, flag: %d->%d\n",
++		// 	current->pid, task_cpu(current), smp_processor_id(), current->prefetch_disable, arg2 ? 1 : 0
++		// );
++		// preempt_enable();
++		current->prefetch_disable = arg2 ? 1 : 0;
++		smp_call_function_single(task_cpu(current), set_arm_prefetch, (void *)current, 1);
++		break;
++	case PR_GET_PREFETCH_DISABLE:
++		error = current->prefetch_disable;
++		break;
+ 	default:
+ 		error = -EINVAL;
+ 		break;

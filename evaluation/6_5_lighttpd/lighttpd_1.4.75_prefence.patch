@@ -1,0 +1,548 @@
+diff --git a/src/mod_openssl.c b/src/mod_openssl.c
+index 84a1a8b7..ff14c984 100644
+--- a/src/mod_openssl.c
++++ b/src/mod_openssl.c
+@@ -37,6 +37,26 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
++// PreFence prctl interface
++#include <sys/prctl.h>
++#define PR_SET_PREFETCH_DISABLE     128
++#define PR_GET_PREFETCH_DISABLE     129
++
++static inline void set_pfdis_flag(int new_value) {
++    int ret = prctl(PR_SET_PREFETCH_DISABLE, new_value, NULL, NULL);
++    if (ret != 0) {
++        exit(EXIT_FAILURE);
++    }
++}
++
++static inline int get_pfdis_flag(void) {
++    int flag = prctl(PR_GET_PREFETCH_DISABLE, NULL, NULL, NULL);
++    if (flag != 0 && flag != 1) {
++        exit(EXIT_FAILURE);
++    }
++    return flag;
++}
++
+ /*(not needed)*/
+ /* correction; needed for:
+  *   SSL_load_client_CA_file()
+@@ -323,7 +343,7 @@ tlsext_ticket_wipe_expired (const unix_time64_t cur_ts)
+  * but mod_openssl code uses EVP_aes_256_cbc() instead of EVP_aes_128_cbc()
+  */
+ static int
+-ssl_tlsext_ticket_key_cb (SSL *s, unsigned char key_name[16],
++_ssl_tlsext_ticket_key_cb (SSL *s, unsigned char key_name[16],
+                           unsigned char iv[EVP_MAX_IV_LENGTH],
+                           EVP_CIPHER_CTX *ctx, HMAC_CTX *hctx, int enc)
+ #else /* OPENSSL_VERSION_NUMBER >= 0x30000000L */
+@@ -331,7 +351,7 @@ ssl_tlsext_ticket_key_cb (SSL *s, unsigned char key_name[16],
+  *   man SSL_CTX_set_tlsext_ticket_key_cb
+  */
+ static int
+-ssl_tlsext_ticket_key_cb(SSL *s, unsigned char key_name[16],
++_ssl_tlsext_ticket_key_cb(SSL *s, unsigned char key_name[16],
+                          unsigned char *iv, EVP_CIPHER_CTX *ctx,
+                          EVP_MAC_CTX *hctx, int enc)
+ #endif
+@@ -385,6 +405,26 @@ ssl_tlsext_ticket_key_cb(SSL *s, unsigned char key_name[16],
+     }
+ }
+ 
++#if OPENSSL_VERSION_NUMBER < 0x30000000L
++static int
++ssl_tlsext_ticket_key_cb (SSL *s, unsigned char key_name[16],
++                          unsigned char iv[EVP_MAX_IV_LENGTH],
++                          EVP_CIPHER_CTX *ctx, HMAC_CTX *hctx, int enc)
++#else /* OPENSSL_VERSION_NUMBER >= 0x30000000L */
++static int
++ssl_tlsext_ticket_key_cb(SSL *s, unsigned char key_name[16],
++                         unsigned char *iv, EVP_CIPHER_CTX *ctx,
++                         EVP_MAC_CTX *hctx, int enc)
++#endif
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    int ret = _ssl_tlsext_ticket_key_cb(s, key_name, iv, ctx, hctx, enc);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
++
++
+ 
+ static int
+ mod_openssl_session_ticket_key_file (const char *fn)
+@@ -470,7 +510,7 @@ mod_openssl_session_ticket_key_check (const plugin_data *p, const unix_time64_t
+ #ifndef OPENSSL_NO_OCSP
+ #ifndef BORINGSSL_API_VERSION /* BoringSSL suggests using different API */
+ static int
+-ssl_tlsext_status_cb(SSL *ssl, void *arg)
++_ssl_tlsext_status_cb(SSL *ssl, void *arg)
+ {
+   #ifdef SSL_get_tlsext_status_type
+     if (TLSEXT_STATUSTYPE_ocsp != SSL_get_tlsext_status_type(ssl))
+@@ -501,16 +541,33 @@ ssl_tlsext_status_cb(SSL *ssl, void *arg)
+     }
+     return SSL_TLSEXT_ERR_OK;
+ }
++static int
++ssl_tlsext_status_cb(SSL *ssl, void *arg)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    int ret = _ssl_tlsext_status_cb(ssl, arg);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
+ #endif
+ #endif
+ 
+ 
+-INIT_FUNC(mod_openssl_init)
++INIT_FUNC(_mod_openssl_init)
+ {
+     plugin_data_singleton = (plugin_data *)ck_calloc(1, sizeof(plugin_data));
+     return plugin_data_singleton;
+ }
+ 
++INIT_FUNC(mod_openssl_init)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    void* ret = _mod_openssl_init();
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
+ 
+ static int mod_openssl_init_once_openssl (server *srv)
+ {
+@@ -942,7 +999,7 @@ mod_openssl_load_ca_files (SSL_CTX *ssl_ctx, plugin_data *p, server *srv)
+ #endif
+ 
+ 
+-FREE_FUNC(mod_openssl_free)
++FREE_FUNC(_mod_openssl_free)
+ {
+     plugin_data *p = p_d;
+     if (NULL == p->srv) return;
+@@ -950,6 +1007,13 @@ FREE_FUNC(mod_openssl_free)
+     mod_openssl_free_openssl();
+ }
+ 
++FREE_FUNC(mod_openssl_free)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    _mod_openssl_free(p_d);
++    set_pfdis_flag(pfdis_before);
++}
+ 
+ static void
+ mod_openssl_merge_config_cpv (plugin_config * const pconf, const config_plugin_value_t * const cpv)
+@@ -1053,7 +1117,7 @@ safer_X509_NAME_oneline(X509_NAME *name, char *buf, size_t sz)
+ 
+ 
+ static void
+-ssl_info_callback (const SSL *ssl, int where, int ret)
++_ssl_info_callback (const SSL *ssl, int where, int ret)
+ {
+     UNUSED(ret);
+ 
+@@ -1076,9 +1140,19 @@ ssl_info_callback (const SSL *ssl, int where, int ret)
+   #endif
+ }
+ 
++static void
++ssl_info_callback (const SSL *ssl, int where, int ret)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    _ssl_info_callback(ssl, where, ret);
++    set_pfdis_flag(pfdis_before);
++}
++
++
+ /* https://wiki.openssl.org/index.php/Manual:SSL_CTX_set_verify(3)#EXAMPLES */
+ static int
+-verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
++_verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
+ {
+     char buf[256];
+     X509 *err_cert;
+@@ -1167,6 +1241,16 @@ verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
+     return !hctx->conf.ssl_verifyclient_enforce;
+ }
+ 
++static int
++verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    int ret = _verify_callback(preverify_ok, ctx);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
++
+ enum {
+   MOD_OPENSSL_ALPN_HTTP11      = 1
+  ,MOD_OPENSSL_ALPN_HTTP10      = 2
+@@ -1175,7 +1259,7 @@ enum {
+ };
+ 
+ static int
+-mod_openssl_cert_cb (SSL *ssl, void *arg)
++_mod_openssl_cert_cb (SSL *ssl, void *arg)
+ {
+     handler_ctx *hctx = (handler_ctx *) SSL_get_app_data(ssl);
+     plugin_cert *pc = hctx->conf.pc;
+@@ -1290,6 +1374,15 @@ mod_openssl_cert_cb (SSL *ssl, void *arg)
+     return 1;
+ }
+ 
++static int
++mod_openssl_cert_cb (SSL *ssl, void *arg) {
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    int ret = _mod_openssl_cert_cb(ssl, arg);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
++
+ #ifndef OPENSSL_NO_TLSEXT
+ static int
+ mod_openssl_SNI (handler_ctx *hctx, const char *servername, size_t len)
+@@ -1323,7 +1416,7 @@ mod_openssl_SNI (handler_ctx *hctx, const char *servername, size_t len)
+    && !defined(LIBRESSL_VERSION_NUMBER)
+     return SSL_TLSEXT_ERR_OK;
+   #else
+-    return (mod_openssl_cert_cb(hctx->ssl, NULL) == 1)
++    return (_mod_openssl_cert_cb(hctx->ssl, NULL) == 1)
+       ? SSL_TLSEXT_ERR_OK
+       : SSL_TLSEXT_ERR_ALERT_FATAL;
+   #endif
+@@ -1331,7 +1424,7 @@ mod_openssl_SNI (handler_ctx *hctx, const char *servername, size_t len)
+ 
+ #ifdef SSL_CLIENT_HELLO_SUCCESS
+ static int
+-mod_openssl_client_hello_cb (SSL *ssl, int *al, void *srv)
++_mod_openssl_client_hello_cb (SSL *ssl, int *al, void *srv)
+ {
+     handler_ctx *hctx = (handler_ctx *) SSL_get_app_data(ssl);
+     buffer_copy_string_len(&hctx->r->uri.scheme, CONST_STR_LEN("https"));
+@@ -1359,9 +1452,18 @@ mod_openssl_client_hello_cb (SSL *ssl, int *al, void *srv)
+     *al = TLS1_AD_UNRECOGNIZED_NAME;
+     return SSL_CLIENT_HELLO_ERROR;
+ }
++static int
++mod_openssl_client_hello_cb (SSL *ssl, int *al, void *srv)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    int ret = _mod_openssl_client_hello_cb(ssl, al, srv);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
+ #else
+ static int
+-network_ssl_servername_callback (SSL *ssl, int *al, void *srv)
++_network_ssl_servername_callback (SSL *ssl, int *al, void *srv)
+ {
+     handler_ctx *hctx = (handler_ctx *) SSL_get_app_data(ssl);
+     buffer_copy_string_len(&hctx->r->uri.scheme, CONST_STR_LEN("https"));
+@@ -1378,6 +1480,17 @@ network_ssl_servername_callback (SSL *ssl, int *al, void *srv)
+         SSL_set_read_ahead(ssl, hctx->conf.ssl_read_ahead);
+     return rc;
+ }
++
++static int
++network_ssl_servername_callback (SSL *ssl, int *al, void *srv)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    int ret = _network_ssl_servername_callback(ssl, al, srv);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
++
+ #endif
+ #endif
+ 
+@@ -2020,7 +2133,7 @@ mod_openssl_alpn_h2_policy (handler_ctx * const hctx)
+ 
+ /* https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids */
+ static int
+-mod_openssl_alpn_select_cb (SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen, void *arg)
++_mod_openssl_alpn_select_cb (SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen, void *arg)
+ {
+     handler_ctx *hctx = (handler_ctx *) SSL_get_app_data(ssl);
+     unsigned short proto;
+@@ -2082,6 +2195,16 @@ mod_openssl_alpn_select_cb (SSL *ssl, const unsigned char **out, unsigned char *
+   #endif
+ }
+ 
++static int
++mod_openssl_alpn_select_cb (SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen, void *arg)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    int ret = _mod_openssl_alpn_select_cb(ssl, out, outlen, in, inlen, arg);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
++
+ #endif /* TLSEXT_TYPE_application_layer_protocol_negotiation */
+ 
+ #endif /* OPENSSL_NO_TLSEXT */
+@@ -2879,7 +3002,7 @@ mod_openssl_set_defaults_sockets(server *srv, plugin_data *p)
+ }
+ 
+ 
+-SETDEFAULTS_FUNC(mod_openssl_set_defaults)
++SETDEFAULTS_FUNC(_mod_openssl_set_defaults)
+ {
+     static const config_plugin_keys_t cpk[] = {
+       { CONST_STR_LEN("ssl.pemfile"),
+@@ -3147,6 +3270,14 @@ SETDEFAULTS_FUNC(mod_openssl_set_defaults)
+     return mod_openssl_set_defaults_sockets(srv, p);
+ }
+ 
++SETDEFAULTS_FUNC(mod_openssl_set_defaults)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    handler_t ret = _mod_openssl_set_defaults(srv, p_d);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
+ 
+ __attribute_cold__
+ static int
+@@ -3233,7 +3364,7 @@ mod_openssl_close_notify(handler_ctx *hctx);
+ 
+ 
+ static int
+-connection_write_cq_ssl (connection * const con, chunkqueue * const cq, off_t max_bytes)
++_connection_write_cq_ssl (connection * const con, chunkqueue * const cq, off_t max_bytes)
+ {
+     handler_ctx * const hctx = con->plugin_ctx[plugin_data_singleton->id];
+     SSL * const ssl = hctx->ssl;
+@@ -3293,10 +3424,20 @@ connection_write_cq_ssl (connection * const con, chunkqueue * const cq, off_t ma
+     return 0;
+ }
+ 
++static int
++connection_write_cq_ssl (connection * const con, chunkqueue * const cq, off_t max_bytes)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    int ret = _connection_write_cq_ssl(con, cq, max_bytes);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
++
+ 
+ #if OPENSSL_VERSION_NUMBER >= 0x30000000L
+ static int
+-connection_write_cq_ssl_ktls (connection * const con, chunkqueue * const cq, off_t max_bytes)
++_connection_write_cq_ssl_ktls (connection * const con, chunkqueue * const cq, off_t max_bytes)
+ {
+     handler_ctx * const hctx = con->plugin_ctx[plugin_data_singleton->id];
+ 
+@@ -3345,13 +3486,24 @@ connection_write_cq_ssl_ktls (connection * const con, chunkqueue * const cq, off
+         if (wr < len) return 0; /* try again later */
+     }
+ 
+-    return connection_write_cq_ssl(con, cq, max_bytes);
++    return _connection_write_cq_ssl(con, cq, max_bytes);
++}
++
++static int
++connection_write_cq_ssl_ktls (connection * const con, chunkqueue * const cq, off_t max_bytes)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    int ret = _connection_write_cq_ssl_ktls(con, cq, max_bytes);
++    set_pfdis_flag(pfdis_before);
++    return ret;
+ }
++
+ #endif
+ 
+ 
+ static int
+-connection_read_cq_ssl (connection * const con, chunkqueue * const cq, off_t max_bytes)
++_connection_read_cq_ssl (connection * const con, chunkqueue * const cq, off_t max_bytes)
+ {
+     handler_ctx * const hctx = con->plugin_ctx[plugin_data_singleton->id];
+     int len;
+@@ -3520,8 +3672,17 @@ connection_read_cq_ssl (connection * const con, chunkqueue * const cq, off_t max
+     }
+ }
+ 
++static int
++connection_read_cq_ssl (connection * const con, chunkqueue * const cq, off_t max_bytes)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    int ret = _connection_read_cq_ssl(con, cq, max_bytes);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
+ 
+-CONNECTION_FUNC(mod_openssl_handle_con_accept)
++CONNECTION_FUNC(_mod_openssl_handle_con_accept)
+ {
+     const server_socket *srv_sock = con->srv_socket;
+     if (!srv_sock->is_ssl) return HANDLER_GO_ON;
+@@ -3556,6 +3717,15 @@ CONNECTION_FUNC(mod_openssl_handle_con_accept)
+     }
+ }
+ 
++CONNECTION_FUNC(mod_openssl_handle_con_accept)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    handler_t ret = _mod_openssl_handle_con_accept(con, p_d);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
++
+ 
+ static void
+ mod_openssl_detach(handler_ctx *hctx)
+@@ -3570,7 +3740,7 @@ mod_openssl_detach(handler_ctx *hctx)
+ }
+ 
+ 
+-CONNECTION_FUNC(mod_openssl_handle_con_shut_wr)
++CONNECTION_FUNC(_mod_openssl_handle_con_shut_wr)
+ {
+     plugin_data *p = p_d;
+     handler_ctx *hctx = con->plugin_ctx[p->id];
+@@ -3587,6 +3757,14 @@ CONNECTION_FUNC(mod_openssl_handle_con_shut_wr)
+     return HANDLER_GO_ON;
+ }
+ 
++CONNECTION_FUNC(mod_openssl_handle_con_shut_wr)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    handler_t ret = _mod_openssl_handle_con_shut_wr(con, p_d);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
+ 
+ static int
+ mod_openssl_close_notify(handler_ctx *hctx)
+@@ -3690,7 +3868,7 @@ mod_openssl_close_notify(handler_ctx *hctx)
+ }
+ 
+ 
+-CONNECTION_FUNC(mod_openssl_handle_con_close)
++CONNECTION_FUNC(_mod_openssl_handle_con_close)
+ {
+     plugin_data *p = p_d;
+     handler_ctx *hctx = con->plugin_ctx[p->id];
+@@ -3702,6 +3880,14 @@ CONNECTION_FUNC(mod_openssl_handle_con_close)
+     return HANDLER_GO_ON;
+ }
+ 
++CONNECTION_FUNC(mod_openssl_handle_con_close)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    handler_t ret = _mod_openssl_handle_con_close(con, p_d);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
+ 
+ static void
+ https_add_ssl_client_subject (request_st * const r, X509_NAME *xn)
+@@ -3851,7 +4037,7 @@ http_cgi_ssl_env (request_st * const r, handler_ctx * const hctx)
+ }
+ 
+ 
+-REQUEST_FUNC(mod_openssl_handle_request_env)
++REQUEST_FUNC(_mod_openssl_handle_request_env)
+ {
+     plugin_data *p = p_d;
+     /* simple flag for request_env_patched */
+@@ -3868,8 +4054,16 @@ REQUEST_FUNC(mod_openssl_handle_request_env)
+     return HANDLER_GO_ON;
+ }
+ 
++REQUEST_FUNC(mod_openssl_handle_request_env)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    handler_t ret = _mod_openssl_handle_request_env(r, p_d);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
+ 
+-REQUEST_FUNC(mod_openssl_handle_uri_raw)
++REQUEST_FUNC(_mod_openssl_handle_uri_raw)
+ {
+     /* mod_openssl must be loaded prior to mod_auth
+      * if mod_openssl is configured to set REMOTE_USER based on client cert */
+@@ -3884,22 +4078,39 @@ REQUEST_FUNC(mod_openssl_handle_uri_raw)
+ 
+     mod_openssl_patch_config(r, &hctx->conf);
+     if (hctx->conf.ssl_verifyclient) {
+-        mod_openssl_handle_request_env(r, p);
++        _mod_openssl_handle_request_env(r, p);
+     }
+ 
+     return HANDLER_GO_ON;
+ }
+ 
++REQUEST_FUNC(mod_openssl_handle_uri_raw)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    handler_t ret = _mod_openssl_handle_uri_raw(r, p_d);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
+ 
+-REQUEST_FUNC(mod_openssl_handle_request_reset)
++REQUEST_FUNC(_mod_openssl_handle_request_reset)
+ {
+     plugin_data *p = p_d;
+     r->plugin_ctx[p->id] = NULL; /* simple flag for request_env_patched */
+     return HANDLER_GO_ON;
+ }
+ 
++REQUEST_FUNC(mod_openssl_handle_request_reset)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    handler_t ret = _mod_openssl_handle_request_reset(r, p_d);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
++
+ 
+-TRIGGER_FUNC(mod_openssl_handle_trigger) {
++TRIGGER_FUNC(_mod_openssl_handle_trigger) {
+     const plugin_data * const p = p_d;
+     const unix_time64_t cur_ts = log_epoch_secs;
+     if (cur_ts & 0x3f) return HANDLER_GO_ON; /*(continue once each 64 sec)*/
+@@ -3917,6 +4128,15 @@ TRIGGER_FUNC(mod_openssl_handle_trigger) {
+     return HANDLER_GO_ON;
+ }
+ 
++TRIGGER_FUNC(mod_openssl_handle_trigger)
++{
++    int pfdis_before = get_pfdis_flag();
++    set_pfdis_flag(1);
++    handler_t ret = _mod_openssl_handle_trigger(srv, p_d);
++    set_pfdis_flag(pfdis_before);
++    return ret;
++}
++
+ 
+ __attribute_cold__
+ __declspec_dllexport__

@@ -1,0 +1,123 @@
+diff --git a/main.go b/main.go
+index 557f8c8..19ad183 100644
+--- a/main.go
++++ b/main.go
+@@ -44,6 +44,7 @@ func init() {
+ 	rootCmd.Flags().IntVar(&config.MaxRedirects, "maxRedirects", 0, "Max redirect count of following 30x, default is 30 (work with --follow)")
+ 	rootCmd.Flags().BoolVarP(&config.Debug, "debug", "D", false, "Send request once and show request and response detail")
+ 	rootCmd.Flags().BoolVar(&config.Http2, "http2", false, "Use HTTP/2.0")
++	rootCmd.Flags().StringVar(&config.Logfile, "logfile", "", "Path to logfile")
+ }
+ 
+ var rootCmd = &cobra.Command{
+diff --git a/pit/config.go b/pit/config.go
+index 485608b..c06396b 100644
+--- a/pit/config.go
++++ b/pit/config.go
+@@ -72,6 +72,8 @@ type Config struct {
+ 	Debug bool
+ 	// Http2 if true, will use http2 for fasthttp
+ 	Http2 bool
++	// Path to logfile
++	Logfile string
+ 
+ 	throughput int64
+ 	body       []byte
+diff --git a/pit/pit.go b/pit/pit.go
+index 7fd70a9..7a9ba47 100644
+--- a/pit/pit.go
++++ b/pit/pit.go
+@@ -63,6 +63,7 @@ func New(c Config) *Pit {
+ 	p.tui.count = p.c.Count
+ 	p.tui.duration = p.c.Duration
+ 	p.tui.connections = p.c.Connections
++	p.tui.logfile = p.c.Logfile
+ 	p.tui.throughput = &p.c.throughput
+ 	p.initCmd = p.run
+ 
+diff --git a/pit/tui.go b/pit/tui.go
+index 4502c74..a58421e 100644
+--- a/pit/tui.go
++++ b/pit/tui.go
+@@ -52,6 +52,7 @@ type tui struct {
+ 	progressBar *progress.Model
+ 	quitting    bool
+ 	done        bool
++	logfile     string
+ }
+ 
+ func newTui() *tui {
+@@ -100,6 +101,7 @@ func (t *tui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+ 		var cmd tea.Cmd
+ 		if msg == done {
+ 			t.done = true
++			t.writeLogfile()
+ 			cmd = tea.Quit
+ 		}
+ 		return t, cmd
+@@ -114,6 +116,65 @@ func (t *tui) View() string {
+ 	return t.output()
+ }
+ 
++func (t *tui) writeLogfile() {
++	if (t.logfile == "") {
++		return
++	}
++
++	rpsAvg, rpsStdev, rpsMax := rpsResult(t.rps)
++	latencyAvg, latencyStdev, latencyMax := latencyResult(t.latencies)
++
++	var result = "{"
++
++	// url
++	result += "\"url\": \"" + t.url + "\""
++
++	// requests per second
++	result += ", \"rpsAvg\": "
++	result += strconv.FormatFloat(rpsAvg, 'f', 2, 64)
++	result += ", \"rpsStdev\": "
++	result += strconv.FormatFloat(rpsStdev, 'f', 2, 64)
++	result += ", \"rpsMax\": "
++	result += strconv.FormatFloat(rpsMax, 'f', 2, 64)
++
++	// latency (in ms)
++	result += ", \"latencyAvgMs\": "
++	result += strconv.FormatFloat(latencyAvg, 'f', 2, 64)
++	result += ", \"latencyStdevMs\": "
++	result += strconv.FormatFloat(latencyStdev, 'f', 2, 64)
++	result += ", \"latencyMaxMs\": "
++	result += strconv.FormatFloat(latencyMax, 'f', 2, 64)
++
++	// status codes
++	result += ", \"code1xx\": " + strconv.FormatInt(t.code1xx, 10)
++	result += ", \"code2xx\": " + strconv.FormatInt(t.code2xx, 10)
++	result += ", \"code3xx\": " + strconv.FormatInt(t.code3xx, 10)
++	result += ", \"code4xx\": " + strconv.FormatInt(t.code4xx, 10)
++	result += ", \"code5xx\": " + strconv.FormatInt(t.code5xx, 10)
++	result += ", \"codeOthers\": " + strconv.FormatInt(t.codeOthers, 10)
++
++	// overall statistics
++	result += ", \"totalRequests\": " + strconv.FormatInt(atomic.LoadInt64(&t.reqs), 10)
++	result += ", \"elapsedSec\": " + strconv.FormatFloat(time.Duration(atomic.LoadInt64(&t.elapsed)).Seconds(), 'f', 2, 64)
++
++	// errors
++	result += ", \"errors\": ["
++	for err, count := range t.errs {
++		result += "{"
++		result += "\"error\": \"" + err + "\""
++		result += ", \"count\": " + strconv.FormatInt(int64(count), 10)
++		result += "},"
++	}
++	if len(t.errs) > 0 {
++		result = result[:len(result)-1]
++	}
++	result += "]"
++
++	result += "}"
++
++	os.WriteFile(t.logfile, []byte(result), 0644)
++}
++
+ func (t *tui) appendCode(code int) {
+ 	switch code / 100 {
+ 	case 1:
