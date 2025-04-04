@@ -1,0 +1,1190 @@
+diff --git a/fetchbench/init-scripts/elitebook-gentoo.sh b/fetchbench/init-scripts/elitebook-gentoo.sh
+new file mode 100755
+index 0000000..7c3c4e6
+--- /dev/null
++++ b/fetchbench/init-scripts/elitebook-gentoo.sh
+@@ -0,0 +1,19 @@
++#!/bin/bash
++
++set -e # abort on error
++set -x # print commands
++
++rm -rf build/
++CXXFLAGS="-DRDTSC" CFLAGS="$CXXFLAGS" ASMFLAGS="$CXXFLAGS" cmake -B build .
++make -C build -j$(nproc)
++
++sudo modprobe msr
++
++cd ../../mod-ctrlpf
++sudo bash module_unload.sh
++make clean && make
++sudo bash module_load.sh
++cd ../FetchBench/fetchbench
++
++sudo cpupower -c all frequency-set -f 2.70GHz
++sudo cpupower -c all frequency-info
+diff --git a/fetchbench/init-scripts/rpi4-1.5GHz.sh b/fetchbench/init-scripts/rpi4-1.5GHz.sh
+new file mode 100755
+index 0000000..524bc97
+--- /dev/null
++++ b/fetchbench/init-scripts/rpi4-1.5GHz.sh
+@@ -0,0 +1,24 @@
++#!/bin/bash
++
++set -e # abort on error
++set -x # print commands
++
++rm -rf build/
++CXXFLAGS="-DARM_MSR" CFLAGS="$CXXFLAGS" ASMFLAGS="$CXXFLAGS" cmake -B build .
++make -C build -j$(nproc)
++
++cd ../covert-channel/kernel-modules/rpi4-module-ccr/armv8
++sudo bash module_unload.sh
++make clean
++make
++sudo bash module_load.sh
++
++cd ../../../../../mod-ctrlpf/
++sudo bash module_unload.sh
++make clean
++make
++sudo bash module_load.sh
++
++cd ../FetchBench/fetchbench
++sudo cpufreq-set -c 0-3 -f 1.50GHz
++sudo cpufreq-info
+diff --git a/fetchbench/src/aligned_maccess.cc b/fetchbench/src/aligned_maccess.cc
+index 7d5805b..4013a74 100644
+--- a/fetchbench/src/aligned_maccess.cc
++++ b/fetchbench/src/aligned_maccess.cc
+@@ -1,5 +1,51 @@
+ #include "aligned_maccess.hh"
+ 
++array<maccess_func_t, 256> maccess_noinline_funcs {
++	maccess_1, maccess_2, maccess_3, maccess_4, maccess_5, maccess_6,
++	maccess_7, maccess_8, maccess_9, maccess_10, maccess_11, maccess_12,
++	maccess_13, maccess_14, maccess_15, maccess_16, maccess_17, maccess_18,
++	maccess_19, maccess_20, maccess_21, maccess_22, maccess_23, maccess_24,
++	maccess_25, maccess_26, maccess_27, maccess_28, maccess_29, maccess_30,
++	maccess_31, maccess_32, maccess_33, maccess_34, maccess_35, maccess_36,
++	maccess_37, maccess_38, maccess_39, maccess_40, maccess_41, maccess_42,
++	maccess_43, maccess_44, maccess_45, maccess_46, maccess_47, maccess_48,
++	maccess_49, maccess_50, maccess_51, maccess_52, maccess_53, maccess_54,
++	maccess_55, maccess_56, maccess_57, maccess_58, maccess_59, maccess_60,
++	maccess_61, maccess_62, maccess_63, maccess_64, maccess_65, maccess_66,
++	maccess_67, maccess_68, maccess_69, maccess_70, maccess_71, maccess_72,
++	maccess_73, maccess_74, maccess_75, maccess_76, maccess_77, maccess_78,
++	maccess_79, maccess_80, maccess_81, maccess_82, maccess_83, maccess_84,
++	maccess_85, maccess_86, maccess_87, maccess_88, maccess_89, maccess_90,
++	maccess_91, maccess_92, maccess_93, maccess_94, maccess_95, maccess_96,
++	maccess_97, maccess_98, maccess_99, maccess_100, maccess_101, maccess_102,
++	maccess_103, maccess_104, maccess_105, maccess_106, maccess_107, maccess_108,
++	maccess_109, maccess_110, maccess_111, maccess_112, maccess_113, maccess_114,
++	maccess_115, maccess_116, maccess_117, maccess_118, maccess_119, maccess_120,
++	maccess_121, maccess_122, maccess_123, maccess_124, maccess_125, maccess_126,
++	maccess_127, maccess_128, maccess_129, maccess_130, maccess_131, maccess_132,
++	maccess_133, maccess_134, maccess_135, maccess_136, maccess_137, maccess_138,
++	maccess_139, maccess_140, maccess_141, maccess_142, maccess_143, maccess_144,
++	maccess_145, maccess_146, maccess_147, maccess_148, maccess_149, maccess_150,
++	maccess_151, maccess_152, maccess_153, maccess_154, maccess_155, maccess_156,
++	maccess_157, maccess_158, maccess_159, maccess_160, maccess_161, maccess_162,
++	maccess_163, maccess_164, maccess_165, maccess_166, maccess_167, maccess_168,
++	maccess_169, maccess_170, maccess_171, maccess_172, maccess_173, maccess_174,
++	maccess_175, maccess_176, maccess_177, maccess_178, maccess_179, maccess_180,
++	maccess_181, maccess_182, maccess_183, maccess_184, maccess_185, maccess_186,
++	maccess_187, maccess_188, maccess_189, maccess_190, maccess_191, maccess_192,
++	maccess_193, maccess_194, maccess_195, maccess_196, maccess_197, maccess_198,
++	maccess_199, maccess_200, maccess_201, maccess_202, maccess_203, maccess_204,
++	maccess_205, maccess_206, maccess_207, maccess_208, maccess_209, maccess_210,
++	maccess_211, maccess_212, maccess_213, maccess_214, maccess_215, maccess_216,
++	maccess_217, maccess_218, maccess_219, maccess_220, maccess_221, maccess_222,
++	maccess_223, maccess_224, maccess_225, maccess_226, maccess_227, maccess_228,
++	maccess_229, maccess_230, maccess_231, maccess_232, maccess_233, maccess_234,
++	maccess_235, maccess_236, maccess_237, maccess_238, maccess_239, maccess_240,
++	maccess_241, maccess_242, maccess_243, maccess_244, maccess_245, maccess_246,
++	maccess_247, maccess_248, maccess_249, maccess_250, maccess_251, maccess_252,
++	maccess_253, maccess_254, maccess_255, maccess_256
++};
++
+ /**
+  * Returns a pair of two function pointers to two non-inlining maccess
+  * functions that are aligned at a 2^(colliding_bits) boundary.
+@@ -99,6 +145,10 @@ pair<maccess_func_t,maccess_func_t> get_maccess_functions(size_t colliding_bits)
+ 	return funcs;
+ }
+ 
++maccess_func_t get_random_maccess_noinline_func() {
++	return maccess_noinline_funcs[random_uint32(0, maccess_noinline_funcs.size() - 1)];
++}
++
+ __attribute__((aligned(1 << 5))) __attribute__ ((noinline)) void maccess_5_1(void* p) {
+ 	maccess(p);
+ }
+@@ -260,64 +310,259 @@ __attribute__((aligned(1 << 24))) __attribute__ ((noinline)) void maccess_24_2(v
+ }
+ 
+ // non inline maccess for creating multiple entries in SMS prefetcher
+-__attribute__ ((noinline)) void maccess_1(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_2(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_3(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_4(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_5(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_6(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_7(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_8(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_9(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_10(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_11(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_12(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_13(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_14(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_15(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_16(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_17(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_18(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_19(void* p) {
+-	maccess(p);
+-}
+-__attribute__ ((noinline)) void maccess_20(void* p) {
+-	maccess(p);
+-}
+-
++__attribute__ ((noinline)) void maccess_1(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_2(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_3(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_4(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_5(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_6(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_7(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_8(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_9(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_10(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_11(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_12(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_13(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_14(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_15(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_16(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_17(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_18(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_19(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_20(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_21(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_22(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_23(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_24(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_25(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_26(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_27(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_28(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_29(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_30(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_31(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_32(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_33(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_34(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_35(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_36(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_37(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_38(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_39(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_40(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_41(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_42(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_43(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_44(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_45(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_46(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_47(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_48(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_49(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_50(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_51(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_52(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_53(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_54(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_55(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_56(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_57(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_58(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_59(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_60(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_61(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_62(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_63(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_64(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_65(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_66(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_67(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_68(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_69(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_70(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_71(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_72(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_73(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_74(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_75(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_76(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_77(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_78(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_79(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_80(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_81(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_82(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_83(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_84(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_85(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_86(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_87(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_88(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_89(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_90(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_91(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_92(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_93(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_94(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_95(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_96(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_97(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_98(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_99(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_100(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_101(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_102(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_103(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_104(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_105(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_106(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_107(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_108(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_109(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_110(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_111(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_112(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_113(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_114(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_115(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_116(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_117(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_118(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_119(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_120(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_121(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_122(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_123(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_124(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_125(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_126(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_127(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_128(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_129(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_130(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_131(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_132(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_133(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_134(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_135(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_136(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_137(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_138(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_139(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_140(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_141(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_142(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_143(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_144(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_145(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_146(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_147(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_148(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_149(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_150(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_151(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_152(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_153(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_154(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_155(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_156(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_157(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_158(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_159(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_160(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_161(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_162(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_163(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_164(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_165(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_166(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_167(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_168(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_169(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_170(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_171(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_172(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_173(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_174(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_175(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_176(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_177(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_178(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_179(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_180(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_181(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_182(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_183(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_184(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_185(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_186(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_187(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_188(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_189(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_190(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_191(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_192(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_193(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_194(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_195(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_196(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_197(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_198(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_199(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_200(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_201(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_202(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_203(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_204(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_205(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_206(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_207(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_208(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_209(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_210(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_211(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_212(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_213(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_214(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_215(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_216(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_217(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_218(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_219(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_220(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_221(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_222(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_223(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_224(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_225(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_226(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_227(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_228(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_229(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_230(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_231(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_232(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_233(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_234(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_235(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_236(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_237(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_238(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_239(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_240(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_241(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_242(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_243(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_244(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_245(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_246(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_247(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_248(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_249(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_250(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_251(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_252(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_253(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_254(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_255(void* p) { maccess(p); }
++__attribute__ ((noinline)) void maccess_256(void* p) { maccess(p); }
+diff --git a/fetchbench/src/aligned_maccess.hh b/fetchbench/src/aligned_maccess.hh
+index 1ff3627..e54e09a 100644
+--- a/fetchbench/src/aligned_maccess.hh
++++ b/fetchbench/src/aligned_maccess.hh
+@@ -1,13 +1,17 @@
+ #pragma once
+ 
++#include <array>
+ #include <utility>
+ #include "cacheutils.hh"
+ 
+ typedef void (*maccess_func_t)(void*);
++using std::array;
+ using std::pair;
+ 
+ pair<maccess_func_t, maccess_func_t> get_maccess_functions(size_t colliding_bits);
+ 
++maccess_func_t get_random_maccess_noinline_func();
++
+ void maccess_5_1(void* p);
+ void maccess_5_2(void* p);
+ void maccess_6_1(void* p);
+@@ -69,4 +73,239 @@ void maccess_17(void* p);
+ void maccess_18(void* p);
+ void maccess_19(void* p);
+ void maccess_20(void* p);
+-
++void maccess_21(void* p);
++void maccess_22(void* p);
++void maccess_23(void* p);
++void maccess_24(void* p);
++void maccess_25(void* p);
++void maccess_26(void* p);
++void maccess_27(void* p);
++void maccess_28(void* p);
++void maccess_29(void* p);
++void maccess_30(void* p);
++void maccess_31(void* p);
++void maccess_32(void* p);
++void maccess_33(void* p);
++void maccess_34(void* p);
++void maccess_35(void* p);
++void maccess_36(void* p);
++void maccess_37(void* p);
++void maccess_38(void* p);
++void maccess_39(void* p);
++void maccess_40(void* p);
++void maccess_41(void* p);
++void maccess_42(void* p);
++void maccess_43(void* p);
++void maccess_44(void* p);
++void maccess_45(void* p);
++void maccess_46(void* p);
++void maccess_47(void* p);
++void maccess_48(void* p);
++void maccess_49(void* p);
++void maccess_50(void* p);
++void maccess_51(void* p);
++void maccess_52(void* p);
++void maccess_53(void* p);
++void maccess_54(void* p);
++void maccess_55(void* p);
++void maccess_56(void* p);
++void maccess_57(void* p);
++void maccess_58(void* p);
++void maccess_59(void* p);
++void maccess_60(void* p);
++void maccess_61(void* p);
++void maccess_62(void* p);
++void maccess_63(void* p);
++void maccess_64(void* p);
++void maccess_65(void* p);
++void maccess_66(void* p);
++void maccess_67(void* p);
++void maccess_68(void* p);
++void maccess_69(void* p);
++void maccess_70(void* p);
++void maccess_71(void* p);
++void maccess_72(void* p);
++void maccess_73(void* p);
++void maccess_74(void* p);
++void maccess_75(void* p);
++void maccess_76(void* p);
++void maccess_77(void* p);
++void maccess_78(void* p);
++void maccess_79(void* p);
++void maccess_80(void* p);
++void maccess_81(void* p);
++void maccess_82(void* p);
++void maccess_83(void* p);
++void maccess_84(void* p);
++void maccess_85(void* p);
++void maccess_86(void* p);
++void maccess_87(void* p);
++void maccess_88(void* p);
++void maccess_89(void* p);
++void maccess_90(void* p);
++void maccess_91(void* p);
++void maccess_92(void* p);
++void maccess_93(void* p);
++void maccess_94(void* p);
++void maccess_95(void* p);
++void maccess_96(void* p);
++void maccess_97(void* p);
++void maccess_98(void* p);
++void maccess_99(void* p);
++void maccess_100(void* p);
++void maccess_101(void* p);
++void maccess_102(void* p);
++void maccess_103(void* p);
++void maccess_104(void* p);
++void maccess_105(void* p);
++void maccess_106(void* p);
++void maccess_107(void* p);
++void maccess_108(void* p);
++void maccess_109(void* p);
++void maccess_110(void* p);
++void maccess_111(void* p);
++void maccess_112(void* p);
++void maccess_113(void* p);
++void maccess_114(void* p);
++void maccess_115(void* p);
++void maccess_116(void* p);
++void maccess_117(void* p);
++void maccess_118(void* p);
++void maccess_119(void* p);
++void maccess_120(void* p);
++void maccess_121(void* p);
++void maccess_122(void* p);
++void maccess_123(void* p);
++void maccess_124(void* p);
++void maccess_125(void* p);
++void maccess_126(void* p);
++void maccess_127(void* p);
++void maccess_128(void* p);
++void maccess_129(void* p);
++void maccess_130(void* p);
++void maccess_131(void* p);
++void maccess_132(void* p);
++void maccess_133(void* p);
++void maccess_134(void* p);
++void maccess_135(void* p);
++void maccess_136(void* p);
++void maccess_137(void* p);
++void maccess_138(void* p);
++void maccess_139(void* p);
++void maccess_140(void* p);
++void maccess_141(void* p);
++void maccess_142(void* p);
++void maccess_143(void* p);
++void maccess_144(void* p);
++void maccess_145(void* p);
++void maccess_146(void* p);
++void maccess_147(void* p);
++void maccess_148(void* p);
++void maccess_149(void* p);
++void maccess_150(void* p);
++void maccess_151(void* p);
++void maccess_152(void* p);
++void maccess_153(void* p);
++void maccess_154(void* p);
++void maccess_155(void* p);
++void maccess_156(void* p);
++void maccess_157(void* p);
++void maccess_158(void* p);
++void maccess_159(void* p);
++void maccess_160(void* p);
++void maccess_161(void* p);
++void maccess_162(void* p);
++void maccess_163(void* p);
++void maccess_164(void* p);
++void maccess_165(void* p);
++void maccess_166(void* p);
++void maccess_167(void* p);
++void maccess_168(void* p);
++void maccess_169(void* p);
++void maccess_170(void* p);
++void maccess_171(void* p);
++void maccess_172(void* p);
++void maccess_173(void* p);
++void maccess_174(void* p);
++void maccess_175(void* p);
++void maccess_176(void* p);
++void maccess_177(void* p);
++void maccess_178(void* p);
++void maccess_179(void* p);
++void maccess_180(void* p);
++void maccess_181(void* p);
++void maccess_182(void* p);
++void maccess_183(void* p);
++void maccess_184(void* p);
++void maccess_185(void* p);
++void maccess_186(void* p);
++void maccess_187(void* p);
++void maccess_188(void* p);
++void maccess_189(void* p);
++void maccess_190(void* p);
++void maccess_191(void* p);
++void maccess_192(void* p);
++void maccess_193(void* p);
++void maccess_194(void* p);
++void maccess_195(void* p);
++void maccess_196(void* p);
++void maccess_197(void* p);
++void maccess_198(void* p);
++void maccess_199(void* p);
++void maccess_200(void* p);
++void maccess_201(void* p);
++void maccess_202(void* p);
++void maccess_203(void* p);
++void maccess_204(void* p);
++void maccess_205(void* p);
++void maccess_206(void* p);
++void maccess_207(void* p);
++void maccess_208(void* p);
++void maccess_209(void* p);
++void maccess_210(void* p);
++void maccess_211(void* p);
++void maccess_212(void* p);
++void maccess_213(void* p);
++void maccess_214(void* p);
++void maccess_215(void* p);
++void maccess_216(void* p);
++void maccess_217(void* p);
++void maccess_218(void* p);
++void maccess_219(void* p);
++void maccess_220(void* p);
++void maccess_221(void* p);
++void maccess_222(void* p);
++void maccess_223(void* p);
++void maccess_224(void* p);
++void maccess_225(void* p);
++void maccess_226(void* p);
++void maccess_227(void* p);
++void maccess_228(void* p);
++void maccess_229(void* p);
++void maccess_230(void* p);
++void maccess_231(void* p);
++void maccess_232(void* p);
++void maccess_233(void* p);
++void maccess_234(void* p);
++void maccess_235(void* p);
++void maccess_236(void* p);
++void maccess_237(void* p);
++void maccess_238(void* p);
++void maccess_239(void* p);
++void maccess_240(void* p);
++void maccess_241(void* p);
++void maccess_242(void* p);
++void maccess_243(void* p);
++void maccess_244(void* p);
++void maccess_245(void* p);
++void maccess_246(void* p);
++void maccess_247(void* p);
++void maccess_248(void* p);
++void maccess_249(void* p);
++void maccess_250(void* p);
++void maccess_251(void* p);
++void maccess_252(void* p);
++void maccess_253(void* p);
++void maccess_254(void* p);
++void maccess_255(void* p);
++void maccess_256(void* p);
+\ No newline at end of file
+diff --git a/fetchbench/src/mod_ctrl_pf_handle.cc b/fetchbench/src/mod_ctrl_pf_handle.cc
+new file mode 100644
+index 0000000..3ba2936
+--- /dev/null
++++ b/fetchbench/src/mod_ctrl_pf_handle.cc
+@@ -0,0 +1,13 @@
++#include "mod_ctrl_pf_handle.hh"
++
++ModCtrlPfHandle::ModCtrlPfHandle() {
++	fd = open(DEVICE_FILE_PATH, 0);
++	if (fd < 0) {
++		perror("Can't open device file " DEVICE_FILE_PATH);
++		exit(-1);
++	}
++}
++
++ModCtrlPfHandle::~ModCtrlPfHandle() {
++	close(fd);
++}
+\ No newline at end of file
+diff --git a/fetchbench/src/mod_ctrl_pf_handle.hh b/fetchbench/src/mod_ctrl_pf_handle.hh
+new file mode 100644
+index 0000000..aa3a10f
+--- /dev/null
++++ b/fetchbench/src/mod_ctrl_pf_handle.hh
+@@ -0,0 +1,28 @@
++#pragma once
++
++#include <sys/types.h>
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <unistd.h>
++#include <stdlib.h>
++
++#include "../../mod-ctrlpf/ctrlpf_ioctl.h"
++
++#if ! (defined(__x86_64__) || (defined(__aarch64__) && ! defined(__APPLE__)))
++	#error Architecture not supported
++#endif
++
++/**
++ * Wrapper around the file handle to the mod-pfctrl kernel module
++ */
++class ModCtrlPfHandle {
++public:
++	int fd;
++	ModCtrlPfHandle();
++	~ModCtrlPfHandle();
++	// Delete copy constructor and copy-assignment. Implicitly also deletes
++	// move constructor/assignment.
++	ModCtrlPfHandle(ModCtrlPfHandle const&) = delete;
++	ModCtrlPfHandle& operator=(ModCtrlPfHandle const&) = delete;
++};
+\ No newline at end of file
+diff --git a/fetchbench/src/testcase_stride.hh b/fetchbench/src/testcase_stride.hh
+index aa80fd4..5049b59 100644
+--- a/fetchbench/src/testcase_stride.hh
++++ b/fetchbench/src/testcase_stride.hh
+@@ -16,6 +16,7 @@
+ #include "logger.hh"
+ #include "utils.hh"
+ #include "mapping.hh"
++#include "mod_ctrl_pf_handle.hh"
+ 
+ #include "testcase_stride_strideexperiment.hh"
+ 
+@@ -901,6 +902,110 @@ protected:
+ 		};
+ 	}
+ 
++	/**
++	 * Test to determine whether the prefetcher keeps learning while
++	 * disabled.
++	 *
++	 * @param[in]  no_repetitions  Number of repetitions
++	 *
++	 * @return     JSON structure describing the results
++	 */
++	Json test_disable_keep_learning(size_t no_repetitions) {
++		L::info("Test: %s\n", __FUNCTION__);
++
++		ModCtrlPfHandle modctrlpf;
++
++		Mapping mapping = allocate_mapping(5 * PAGE_SIZE);
++		random_activity(mapping);
++		flush_mapping(mapping);
++
++		ssize_t stride = 3 * CACHE_LINE_SIZE;
++		size_t step = 12;
++
++		vector<string> dump_filenames;
++
++		StrideExperiment experiment_disabled { stride, step, 0, use_nanosleep, fr_thresh, noise_thresh };
++		vector<size_t> cache_histogram_disabled = experiment_disabled.collect_cache_histogram(mapping, no_repetitions, workload_stride_loop_disable_keep_learning, &modctrlpf.fd);
++		vector<bool> prefetch_vector_disabled = experiment_disabled.evaluate_cache_histogram(cache_histogram_disabled, no_repetitions);
++		size_t count_disabled = std::count(prefetch_vector_disabled.begin(), prefetch_vector_disabled.end(), true);
++		string dump_filename_disabled = "trace-stride-test_disable_keep_learning-disabled.json";
++		experiment_disabled.dump(cache_histogram_disabled, prefetch_vector_disabled, dump_filename_disabled);
++		dump_filenames.push_back(dump_filename_disabled);
++
++		random_activity(mapping);
++		flush_mapping(mapping);
++
++		StrideExperiment experiment_baseline { stride, step, 0, use_nanosleep, fr_thresh, noise_thresh };
++		vector<size_t> cache_histogram_baseline = experiment_baseline.collect_cache_histogram(mapping, no_repetitions, workload_stride_loop_disable_keep_learning_baseline, &modctrlpf.fd);
++		vector<bool> prefetch_vector_baseline = experiment_baseline.evaluate_cache_histogram(cache_histogram_baseline, no_repetitions);
++		size_t count_baseline = std::count(prefetch_vector_baseline.begin(), prefetch_vector_baseline.end(), true);
++		string dump_filename_baseline = "trace-stride-test_disable_keep_learning-baseline.json";
++		experiment_baseline.dump(cache_histogram_baseline, prefetch_vector_baseline, dump_filename_baseline);
++		dump_filenames.push_back(dump_filename_baseline);
++
++		plot_stride(string{__FUNCTION__}, dump_filenames);
++
++		unmap_mapping(mapping);
++
++		return Json::object {
++			{ "status", "completed" },
++			{ "count_disabled", (int)count_disabled },
++			{ "count_baseline", (int)count_baseline },
++		};
++	}
++
++	/**
++	 * Test to determine whether the prefetcher flushes its state when
++	 * disabled and re-enabled.
++	 *
++	 * @param[in]  no_repetitions  Number of repetitions
++	 *
++	 * @return     JSON structure describing the results
++	 */
++	Json test_disable_flush_state(size_t no_repetitions) {
++		L::info("Test: %s\n", __FUNCTION__);
++
++		ModCtrlPfHandle modctrlpf;
++
++		Mapping mapping = allocate_mapping(5 * PAGE_SIZE);
++		random_activity(mapping);
++		flush_mapping(mapping);
++
++		ssize_t stride = 3 * CACHE_LINE_SIZE;
++		size_t step = 12;
++
++		vector<string> dump_filenames;
++
++		StrideExperiment experiment_disabled { stride, step, 0, use_nanosleep, fr_thresh, noise_thresh };
++		vector<size_t> cache_histogram_disabled = experiment_disabled.collect_cache_histogram(mapping, no_repetitions, workload_stride_loop_disable_flush, &modctrlpf.fd);
++		vector<bool> prefetch_vector_disabled = experiment_disabled.evaluate_cache_histogram(cache_histogram_disabled, no_repetitions);
++		size_t count_disabled = std::count(prefetch_vector_disabled.begin(), prefetch_vector_disabled.end(), true);
++		string dump_filename_disabled = "trace-stride-test_disable_flush-disabled.json";
++		experiment_disabled.dump(cache_histogram_disabled, prefetch_vector_disabled, dump_filename_disabled);
++		dump_filenames.push_back(dump_filename_disabled);
++
++		random_activity(mapping);
++		flush_mapping(mapping);
++
++		StrideExperiment experiment_baseline { stride, step, 0, use_nanosleep, fr_thresh, noise_thresh };
++		vector<size_t> cache_histogram_baseline = experiment_baseline.collect_cache_histogram(mapping, no_repetitions, workload_stride_loop_disable_flush_baseline, &modctrlpf.fd);
++		vector<bool> prefetch_vector_baseline = experiment_baseline.evaluate_cache_histogram(cache_histogram_baseline, no_repetitions);
++		size_t count_baseline = std::count(prefetch_vector_baseline.begin(), prefetch_vector_baseline.end(), true);
++		string dump_filename_baseline = "trace-stride-test_disable_flush-baseline.json";
++		experiment_baseline.dump(cache_histogram_baseline, prefetch_vector_baseline, dump_filename_baseline);
++		dump_filenames.push_back(dump_filename_baseline);
++
++		plot_stride(string{__FUNCTION__}, dump_filenames);
++
++		unmap_mapping(mapping);
++
++		return Json::object {
++			{ "status", "completed" },
++			{ "count_disabled", (int)count_disabled },
++			{ "count_baseline", (int)count_baseline },
++		};
++	}
++
+ 	virtual Json identify() override {
+ 		size_t no_repetitions = 40000 * (PAGE_SIZE / 4096);
+ 
+@@ -919,18 +1024,19 @@ protected:
+ 		size_t no_repetitions = 40000 * (PAGE_SIZE / 4096);
+ 
+ 		return Json::object {
+-			{ "test_trigger_same_pc_different_memory", test_trigger_same_pc_different_memory(no_repetitions) },
+-			{ "test_trigger_different_pc_same_memory", test_trigger_different_pc_same_memory(no_repetitions) },
+-			{ "test_trigger_different_pc_different_memory", test_trigger_different_pc_different_memory(no_repetitions) },
+-			{ "test_overview", test_overview(no_repetitions) },
+-			{ "test_load_pref_corr", test_load_pref_corr(no_repetitions) },
+-			{ "test_no_prefetches", test_no_prefetches(no_repetitions) },
+-			{ "test_min_max_stride", test_min_max_stride(no_repetitions) },
+-			{ "test_pc_collision_1acc", test_pc_collision(no_repetitions, 1) },
+-			{ "test_pc_collision_2acc", test_pc_collision(no_repetitions, 2) },
+-			{ "test_stride_less_than_cl_size", test_stride_less_than_cl_size(no_repetitions) },
+-			{ "test_random_offset_within_cl", test_random_offset_within_cl(no_repetitions) },
+-			{ "test_cross_page_boundary", test_cross_page_boundary(no_repetitions) },
++			// { "test_trigger_same_pc_different_memory", test_trigger_same_pc_different_memory(no_repetitions) },
++			// { "test_trigger_different_pc_same_memory", test_trigger_different_pc_same_memory(no_repetitions) },
++			// { "test_trigger_different_pc_different_memory", test_trigger_different_pc_different_memory(no_repetitions) },
++			// { "test_overview", test_overview(no_repetitions) },
++			// { "test_load_pref_corr", test_load_pref_corr(no_repetitions) },
++			// { "test_no_prefetches", test_no_prefetches(no_repetitions) },
++			// { "test_min_max_stride", test_min_max_stride(no_repetitions) },
++			// { "test_pc_collision_1acc", test_pc_collision(no_repetitions, 1) },
++			// { "test_pc_collision_2acc", test_pc_collision(no_repetitions, 2) },
++			// { "test_stride_less_than_cl_size", test_stride_less_than_cl_size(no_repetitions) },
++			// { "test_random_offset_within_cl", test_random_offset_within_cl(no_repetitions) },
++			{ "test_disable_keep_learning", test_disable_keep_learning(no_repetitions) },
++			{ "test_disable_flush_state", test_disable_flush_state(no_repetitions) },
+ 		};
+ 	}
+ };
+diff --git a/fetchbench/src/testcase_stride_strideexperiment.hh b/fetchbench/src/testcase_stride_strideexperiment.hh
+index 3e93230..12ee375 100644
+--- a/fetchbench/src/testcase_stride_strideexperiment.hh
++++ b/fetchbench/src/testcase_stride_strideexperiment.hh
+@@ -12,6 +12,8 @@
+ #include "aligned_maccess.hh"
+ #include "mapping.hh"
+ 
++#include "mod_ctrl_pf_handle.hh"
++
+ using json11::Json;
+ using std::vector;
+ 
+@@ -225,14 +227,15 @@ __attribute__((always_inline)) inline void workload_stride_pc_collision(StrideEx
+ 	maccess_func_t const& maccess_train = maccess_funcs.first;
+ 	maccess_func_t const& maccess_probe = maccess_funcs.second;
+ 
+-	// perform (step-1) accesses in mapping1 and one final access in mapping2.
++	// perform (step-1) accesses in mapping1 (training) and one final access in mapping2 (probing).
+ 	uint8_t* ptr_begin_1 = experiment.get_ptr_begin(mapping1);
+ 	uint8_t* ptr_end_1 = experiment.get_ptr_end(mapping1) - no_accesses_on_mapping2 * experiment.stride;
+ 	uint8_t* ptr_begin_2 = experiment.get_ptr_end(mapping2) - no_accesses_on_mapping2 * experiment.stride;
+-	
++
+ 	for (uint8_t* ptr = ptr_begin_1; ptr < ptr_end_1; ptr += experiment.stride) {
+ 		maccess_train(ptr);
+ 	}
++
+ 	if (no_accesses_on_mapping2 == 1) {
+ 		maccess_probe(ptr_begin_2);
+ 	} else if (no_accesses_on_mapping2 == 2) {
+@@ -273,3 +276,241 @@ __attribute__((always_inline)) inline void workload_stride_random_offset_within_
+ 		maccess(ptr + random_offsets[random_idx++]);
+ 	}
+ }
++
++/**
++ * Test whether the prefetcher keeps learning while disabled
++ *
++ * @param      experiment       The experiment
++ * @param      mapping          The mapping
++ * @param      additional_info  The additional information (here: file
++ *                              descriptor to the mod-ctrlpf device file)
++ */
++__attribute__((always_inline)) inline void workload_stride_loop_disable_keep_learning(StrideExperiment const& experiment, Mapping const& mapping, void* additional_info) {
++	assert(additional_info != nullptr);
++	int ctrlpf_fd = *((int*)additional_info);
++	maccess_func_t maccess_n = get_random_maccess_noinline_func();
++
++	// ===== <PF CONTROL> =====
++	// Disable prefetcher
++	#if defined(__x86_64__)
++		ioctl(ctrlpf_fd, IOCTL_CTRLPF_INTEL_MSRVALUE, 0b1111);
++	#elif (defined(__aarch64__) && ! defined(__APPLE__))
++		ioctl(ctrlpf_fd, IOCTL_CTRLPF_ARM_A72_DISABLE_ALL);
++	#else
++		#error Architecture not supported
++	#endif
++	mfence();
++	// ===== </PF CONTROL> =====
++
++	// Access (steps-1) locations to train the prefetcher.
++	// NB: In line with C++'s general begin/end terminology, the pointer
++	// returned by get_ptr_end points to the past-the-last location, here:
++	// to the (steps+1)'th location. This allows us to use loop conditions
++	// like (ptr < ptr_end) to access (steps) locations. In this testcase
++	// however, we want to access (steps-1) locations in the loop, then do
++	// something with the prefetcher, and finally access the (steps)'th
++	// location separately. So we introduce ptr_last, which actually points
++	// to that last element, and use it in the loop condition and for the
++	// final access.
++	uint8_t* ptr_begin = experiment.get_ptr_begin(mapping);
++	uint8_t* ptr_last = experiment.get_ptr_end(mapping) - experiment.stride;
++	for (uint8_t* ptr = ptr_begin; ptr < ptr_last; ptr += experiment.stride) {
++		maccess_n(ptr);
++	}
++	mfence();
++
++	// ===== <PF CONTROL> =====
++	// Enable prefetcher
++	#if defined(__x86_64__)
++		ioctl(ctrlpf_fd, IOCTL_CTRLPF_INTEL_MSRVALUE, 0b0111);
++	#elif (defined(__aarch64__) && ! defined(__APPLE__))
++		ioctl(ctrlpf_fd, IOCTL_CTRLPF_ARM_A72_ENABLE_ALL);
++	#else
++		#error Architecture not supported
++	#endif
++	// ===== </PF CONTROL> =====
++
++	// The call to the kernel will take a while. This timeframe may be
++	// sufficient for the prefetcher to complete prefetches triggered by
++	// the last load in the loop above. If this is the case, accessing
++	// ptr_last may result in a cache hit (because it was prefetched). As
++	// some prefetchers do not trigger on cache hits, this may impact our
++	// experiment. So we flush the cache line in question before we perform
++	// the final load.
++	flush(ptr_last);
++	mfence();
++
++	// Final access to probe the prefetcher
++	maccess_n(ptr_last);
++}
++
++/**
++ * Test whether the prefetcher keeps learning while disabled
++ *
++ * @param      experiment       The experiment
++ * @param      mapping          The mapping
++ * @param      additional_info  The additional information (here: file
++ *                              descriptor to the mod-ctrlpf device file)
++ */
++__attribute__((always_inline)) inline void workload_stride_loop_disable_keep_learning_baseline(StrideExperiment const& experiment, Mapping const& mapping, void* additional_info) {
++	assert(additional_info != nullptr);
++	int ctrlpf_fd = *((int*)additional_info);
++	maccess_func_t maccess_n = get_random_maccess_noinline_func();
++
++	// ===== <PF CONTROL> =====
++	// Dummy call
++	#if defined(__x86_64__) || (defined(__aarch64__) && ! defined(__APPLE__))
++		ioctl(ctrlpf_fd, IOCTL_CTRLPF_DUMMY_CALL);
++	#else
++		#error Architecture not supported
++	#endif
++	mfence();
++	// ===== </PF CONTROL> =====
++
++	// Access (steps-1) locations to train the prefetcher.
++	// NB: In line with C++'s general begin/end terminology, the pointer
++	// returned by get_ptr_end points to the past-the-last location, here:
++	// to the (steps+1)'th location. This allows us to use loop conditions
++	// like (ptr < ptr_end) to access (steps) locations. In this testcase
++	// however, we want to access (steps-1) locations in the loop, then do
++	// something with the prefetcher, and finally access the (steps)'th
++	// location separately. So we introduce ptr_last, which actually points
++	// to that last element, and use it in the loop condition and for the
++	// final access.
++	uint8_t* ptr_begin = experiment.get_ptr_begin(mapping);
++	uint8_t* ptr_last = experiment.get_ptr_end(mapping) - experiment.stride;
++	for (uint8_t* ptr = ptr_begin; ptr < ptr_last; ptr += experiment.stride) {
++		maccess_n(ptr);
++	}
++	mfence();
++
++	// ===== <PF CONTROL> =====
++	// Dummy call
++	#if defined(__x86_64__) || (defined(__aarch64__) && ! defined(__APPLE__))
++		ioctl(ctrlpf_fd, IOCTL_CTRLPF_DUMMY_CALL);
++	#else
++		#error Architecture not supported
++	#endif
++	// ===== </PF CONTROL> =====
++
++	// The call to the kernel will take a while. This timeframe may be
++	// sufficient for the prefetcher to complete prefetches triggered by
++	// the last load in the loop above. If this is the case, accessing
++	// ptr_last may result in a cache hit (because it was prefetched). As
++	// some prefetchers do not trigger on cache hits, this may impact our
++	// experiment. So we flush the cache line in question before we perform
++	// the final load.
++	flush(ptr_last);
++	mfence();
++
++	// Final access to probe the prefetcher
++	maccess_n(ptr_last);
++}
++
++/**
++ * Test whether the prefetcher flushes its state when disabled and re-enabled
++ *
++ * @param      experiment       The experiment
++ * @param      mapping          The mapping
++ * @param      additional_info  The additional information (here: file
++ *                              descriptor to the mod-ctrlpf device file)
++ */
++__attribute__((always_inline)) inline void workload_stride_loop_disable_flush(StrideExperiment const& experiment, Mapping const& mapping, void* additional_info) {
++	assert(additional_info != nullptr);
++	int ctrlpf_fd = *((int*)additional_info);
++	maccess_func_t maccess_n = get_random_maccess_noinline_func();
++
++	// Access (steps-1) locations to train the prefetcher.
++	// NB: In line with C++'s general begin/end terminology, the pointer
++	// returned by get_ptr_end points to the past-the-last location, here:
++	// to the (steps+1)'th location. This allows us to use loop conditions
++	// like (ptr < ptr_end) to access (steps) locations. In this testcase
++	// however, we want to access (steps-1) locations in the loop, then do
++	// something with the prefetcher, and finally access the (steps)'th
++	// location separately. So we introduce ptr_last, which actually points
++	// to that last element, and use it in the loop condition and for the
++	// final access.
++	uint8_t* ptr_begin = experiment.get_ptr_begin(mapping);
++	uint8_t* ptr_last = experiment.get_ptr_end(mapping) - experiment.stride;
++	for (uint8_t* ptr = ptr_begin; ptr < ptr_last; ptr += experiment.stride) {
++		maccess_n(ptr);
++	}
++	mfence();
++
++	// ===== <PF CONTROL> =====
++	// Turn the prefetcher off and on again
++	#if defined(__x86_64__)
++		ioctl(ctrlpf_fd, IOCTL_CTRLPF_INTEL_TOGGLE_MSRVALUE, 0b0111);
++	#elif (defined(__aarch64__) && ! defined(__APPLE__))
++		ioctl(ctrlpf_fd, IOCTL_CTRLPF_ARM_A72_TOGGLE_ALL);
++	#else
++		#error Architecture not supported
++	#endif
++	// ===== </PF CONTROL> =====
++
++	// The call to the kernel will take a while. This timeframe may be
++	// sufficient for the prefetcher to complete prefetches triggered by
++	// the last load in the loop above. If this is the case, accessing
++	// ptr_last may result in a cache hit (because it was prefetched). As
++	// some prefetchers do not trigger on cache hits, this may impact our
++	// experiment. So we flush the cache line in question before we perform
++	// the final load.
++	flush(ptr_last);
++	mfence();
++
++	// Final access to probe the prefetcher
++	maccess_n(ptr_last);
++}
++
++/**
++ * Test whether the prefetcher keeps learning while disabled
++ *
++ * @param      experiment       The experiment
++ * @param      mapping          The mapping
++ * @param      additional_info  The additional information (here: file
++ *                              descriptor to the mod-ctrlpf device file)
++ */
++__attribute__((always_inline)) inline void workload_stride_loop_disable_flush_baseline(StrideExperiment const& experiment, Mapping const& mapping, void* additional_info) {
++	assert(additional_info != nullptr);
++	int ctrlpf_fd = *((int*)additional_info);
++	maccess_func_t maccess_n = get_random_maccess_noinline_func();
++
++	// Access (steps-1) locations to train the prefetcher.
++	// NB: In line with C++'s general begin/end terminology, the pointer
++	// returned by get_ptr_end points to the past-the-last location, here:
++	// to the (steps+1)'th location. This allows us to use loop conditions
++	// like (ptr < ptr_end) to access (steps) locations. In this testcase
++	// however, we want to access (steps-1) locations in the loop, then do
++	// something with the prefetcher, and finally access the (steps)'th
++	// location separately. So we introduce ptr_last, which actually points
++	// to that last element, and use it in the loop condition and for the
++	// final access.
++	uint8_t* ptr_begin = experiment.get_ptr_begin(mapping);
++	uint8_t* ptr_last = experiment.get_ptr_end(mapping) - experiment.stride;
++	for (uint8_t* ptr = ptr_begin; ptr < ptr_last; ptr += experiment.stride) {
++		maccess_n(ptr);
++	}
++	mfence();
++
++	// ===== <PF CONTROL> =====
++	// dummy call
++	#if defined(__x86_64__) || (defined(__aarch64__) && ! defined(__APPLE__))
++		ioctl(ctrlpf_fd, IOCTL_CTRLPF_DUMMY_CALL);
++	#else
++		#error Architecture not supported
++	#endif
++	// ===== </PF CONTROL> =====
++
++	// The call to the kernel will take a while. This timeframe may be
++	// sufficient for the prefetcher to complete prefetches triggered by
++	// the last load in the loop above. If this is the case, accessing
++	// ptr_last may result in a cache hit (because it was prefetched). As
++	// some prefetchers do not trigger on cache hits, this may impact our
++	// experiment. So we flush the cache line in question before we perform
++	// the final load.
++	flush(ptr_last);
++	mfence();
++
++	// Final access to probe the prefetcher
++	maccess_n(ptr_last);
++}

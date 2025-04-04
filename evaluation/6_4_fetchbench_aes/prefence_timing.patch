@@ -1,0 +1,285 @@
+diff --git a/aes-attack/measure_timing/.gitignore b/aes-attack/measure_timing/.gitignore
+new file mode 100644
+index 0000000..5345936
+--- /dev/null
++++ b/aes-attack/measure_timing/.gitignore
+@@ -0,0 +1,4 @@
++build/
++*.png
++*.svg
++*.log
+diff --git a/aes-attack/measure_timing/CMakeLists.txt b/aes-attack/measure_timing/CMakeLists.txt
+new file mode 100644
+index 0000000..7e0580e
+--- /dev/null
++++ b/aes-attack/measure_timing/CMakeLists.txt
+@@ -0,0 +1,18 @@
++cmake_minimum_required(VERSION 3.13.4)
++
++set(PROJ_NAME "measure_timing")
++
++project(${PROJ_NAME} LANGUAGES CXX)
++
++# add debug symbols
++set(CMAKE_BUILD_TYPE Debug)
++
++# define main executables
++add_executable("measure_timing" "src/measure_timing.cc" "src/common_test.cc" )
++
++# enable C++17 support
++target_compile_features("measure_timing" PUBLIC cxx_std_17)
++
++include_directories("../lib/mbedtls/include")
++file(GLOB MBEDLIB "../lib/mbedtls/library/*.so")
++target_link_libraries("measure_timing" ${MBEDLIB})
+\ No newline at end of file
+diff --git a/aes-attack/measure_timing/plot_timing.py b/aes-attack/measure_timing/plot_timing.py
+new file mode 100644
+index 0000000..87ed3db
+--- /dev/null
++++ b/aes-attack/measure_timing/plot_timing.py
+@@ -0,0 +1,47 @@
++import re
++import statistics
++
++import matplotlib.pyplot as plt
++
++INPUT = {
++    "with_prefetch": "out-with_prefetch.log",
++    "without_prefetch": "out-without_prefetch.log",
++}
++COLORS = {
++    "with_prefetch": "blue",
++    "without_prefetch": "red",
++}
++datasets = {}
++
++for label, filepath in INPUT.items():
++    datasets[label] = []
++    with open(filepath) as file:
++        for line in file:
++            rx = re.match(r"^Time: (?P<time>\d+)\n$", line)
++            if rx is not None:
++                datasets[label].append(int(rx.group("time")))
++            else:
++                assert False, "regex failed"
++
++for label, dataset in datasets.items():
++    print(f"median({label}) = {statistics.median(dataset)}")
++
++hist_min = 800
++hist_max = 1000
++
++for label, dataset in datasets.items():
++    plt.hist(
++        x=dataset,
++        label=label,
++        color=COLORS[label],
++        alpha=0.5,
++        range=(hist_min, hist_max),
++        bins=hist_max-hist_min,
++    )
++
++plt.legend()
++plt.xlabel("time (cycles)")
++plt.ylabel("frequency")
++plt.savefig("plot_timing.png")
++
++
+diff --git a/aes-attack/measure_timing/src/common_test.cc b/aes-attack/measure_timing/src/common_test.cc
+new file mode 100644
+index 0000000..dbec5e3
+--- /dev/null
++++ b/aes-attack/measure_timing/src/common_test.cc
+@@ -0,0 +1,18 @@
++#include "common_test.hh"
++
++
++// Helper function that returns a cpu_set_t with a cpu affinity mask
++// that limits execution to the single (logical) CPU core cpu.
++cpu_set_t build_cpuset(int cpu) {
++	cpu_set_t cpuset;
++	CPU_ZERO(&cpuset);
++	CPU_SET(cpu, &cpuset);
++	return cpuset;
++}
++
++// Set affinity mask of the given process so that the process is executed
++// on a specific (logical) core.
++int move_process_to_cpu(pid_t pid, int cpu) {
++	cpu_set_t cpuset = build_cpuset(cpu);
++	return sched_setaffinity(pid, sizeof(cpu_set_t), &cpuset);
++}
+\ No newline at end of file
+diff --git a/aes-attack/measure_timing/src/common_test.hh b/aes-attack/measure_timing/src/common_test.hh
+new file mode 100644
+index 0000000..85439be
+--- /dev/null
++++ b/aes-attack/measure_timing/src/common_test.hh
+@@ -0,0 +1,37 @@
++#pragma once
++
++#include <inttypes.h>
++#include <sched.h>
++
++#if defined(__ARM_ARCH ) && __ARM_ARCH == 8
++	#define ARCH_ARMV8
++
++	static inline __attribute__((always_inline)) void timing_init() {
++		uint32_t value = 0;
++
++		/* Enable Performance Counter */
++		asm volatile("MRS %0, PMCR_EL0" : "=r" (value));
++		value |= (1 << 0); /* Enable */
++		value |= (1 << 1); /* Cycle counter reset */
++		value |= (1 << 2); /* Reset all counters */
++		asm volatile("MSR PMCR_EL0, %0" : : "r" (value));
++
++		/* Enable cycle counter register */
++		asm volatile("MRS %0, PMCNTENSET_EL0" : "=r" (value));
++		value |= (1 << 31);
++		asm volatile("MSR PMCNTENSET_EL0, %0" : : "r" (value));
++	}
++	static inline __attribute__((always_inline)) void mfence() {
++		asm volatile ("DSB SY");
++		asm volatile ("ISB");
++	}
++	static inline __attribute__((always_inline)) uint64_t rdtsc() {
++		uint64_t result = 0;
++		asm volatile("MRS %0, PMCCNTR_EL0" : "=r" (result));
++		return result;
++	}
++#endif
++
++void timing_init();
++cpu_set_t build_cpuset(int cpu);
++int move_process_to_cpu(pid_t pid, int cpu);
+\ No newline at end of file
+diff --git a/aes-attack/measure_timing/src/measure_timing.cc b/aes-attack/measure_timing/src/measure_timing.cc
+new file mode 100644
+index 0000000..0e04fcb
+--- /dev/null
++++ b/aes-attack/measure_timing/src/measure_timing.cc
+@@ -0,0 +1,69 @@
++#include <stdio.h>
++#include <stdlib.h>
++#include <inttypes.h>
++
++#include <mbedtls/aes.h>
++
++#include "common_test.hh"
++#include "prefence.hh"
++
++#define NO_REPETITIONS 1e7
++
++int main(int argc, char** argv) {
++	// pin process to victim core
++	move_process_to_cpu(0, 0);
++	timing_init();
++	srand(0);
++
++	// Get desired PreFence state from command line
++	uint8_t enable_prefence = 0;
++	if (argc >= 2 && (argv[1][0] == '0' || argv[1][0] == '1')) {
++		enable_prefence = (argv[1][0] == '1') ? 1 : 0;
++	} else {
++		puts("Please specify either 0 (no prefence) or 1 (prefence) as first command line parameter.");
++		return -1;
++	}
++
++	// AES setup
++	uint8_t key[] = { 
++		0x27, 0xb7, 0xa0, 0xc4, 0x99, 0x1b, 0xf4, 0x9c,
++		0x1d, 0x48, 0x49, 0x35, 0x8e, 0xb5, 0x52, 0x1b,
++	};
++	uint8_t output[16];
++	mbedtls_aes_context ctx;
++	mbedtls_aes_init(&ctx);
++	mbedtls_aes_setkey_enc(&ctx, key, 128);
++
++	for (size_t repetition = 0; repetition < NO_REPETITIONS; repetition++) {
++		// Generate new random plaintext block
++		uint8_t plaintext[16];
++		for (size_t i = 0; i < sizeof(plaintext) / sizeof(int); i++) {
++			int r = rand();
++			((int*)plaintext)[i] = r;
++		}
++
++		// Set PreFence bit, if desired.
++		int pfdis_before = get_pfdis_flag();
++		set_pfdis_flag(enable_prefence);
++
++		// Take timestamp before library call
++		mfence();
++		uint64_t time_before = rdtsc();
++		mfence();
++
++		// library call: encrypt plaintext block with key
++		mbedtls_internal_aes_encrypt(&ctx, plaintext, output);
++		
++		// Take timestamp after library call
++		mfence();
++		uint64_t time_after = rdtsc();
++		mfence();
++
++		// Reset prefetcher state
++ 		set_pfdis_flag(pfdis_before);
++
++ 		printf("Time: %lu\n", time_after - time_before);
++	}
++	
++	return 0;
++}
+diff --git a/aes-attack/measure_timing/src/prefence.hh b/aes-attack/measure_timing/src/prefence.hh
+new file mode 100644
+index 0000000..7b737b7
+--- /dev/null
++++ b/aes-attack/measure_timing/src/prefence.hh
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <stdlib.h> // EXIT_FAILURE
++
++#include <sys/prctl.h>
++#define PR_SET_PREFETCH_DISABLE     128
++#define PR_GET_PREFETCH_DISABLE     129
++
++static inline void set_pfdis_flag(int new_value) {
++    int ret = prctl(PR_SET_PREFETCH_DISABLE, new_value, NULL, NULL);
++    if (ret != 0) {
++        exit(EXIT_FAILURE);
++    }
++}
++
++static inline int get_pfdis_flag(void) {
++    int flag = prctl(PR_GET_PREFETCH_DISABLE, NULL, NULL, NULL);
++    if (flag != 0 && flag != 1) {
++        exit(EXIT_FAILURE);
++    }
++    return flag;
++}
+\ No newline at end of file
+diff --git a/setup.sh b/setup.sh
+new file mode 100644
+index 0000000..9e9ad49
+--- /dev/null
++++ b/setup.sh
+@@ -0,0 +1,17 @@
++#!/bin/bash
++set -xe
++
++cd covert-channel/kernel-modules
++
++echo "Loading CCR module"
++cd rpi4-module-ccr/armv8
++make clean
++make
++sudo bash module_load.sh
++cd ..
++
++echo "Fixing CPU frequency"
++sudo cpufreq-set -c 0 -f 1.8GHz
++sudo cpufreq-set -c 1 -f 1.8GHz
++sudo cpufreq-set -c 2 -f 1.8GHz
++sudo cpufreq-set -c 3 -f 1.8GHz
+\ No newline at end of file

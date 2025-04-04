@@ -1,0 +1,4 @@
+files/
+htdocs/uploads/
+*.log
+*.json

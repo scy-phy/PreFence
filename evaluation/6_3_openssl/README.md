@@ -82,6 +82,14 @@ build/victim-bn 02468ace 9 > results.log
 - `02468ace` is the `BIGNUM` to pass to the vulnerable function. This one produces a stride access pattern.
 - `9` is the cache line to probe for prefetching effects. You need to choose this parameter depending on the placement of `SQR_tb` in memory. In our case, `SQR_tb` ended up aligned to a cache-line boundary (0x20d100 mod 64 is 0). In this case, `SQR_tb` spans exactly two cache lines (in our counting, lines 7 and 8) and cache line 9 is the first line that may show prefetching effects. If `SQR_tb` is not aligned to a cache line boundary in your case, the lookup table likely spans across 3 cache lines. In that case, change this parameter to `10` to probe the next cache line.
 
-The plot script `plot_exp_openssl.py` takes the `results.log` file. It generates the file `plot_exp_openssl_overhead.png`, which is Figure 5 in the paper.
+### Plotting the latency of accessing the prefetch location
+
+The plot script `plot_exp_openssl.py` takes the `results.log` file and generates the file `plot_exp_openssl_overhead.png`, which is Figure 5 in the paper.
+
+### Evaluating the temporal overhead
+
+As a by-product, the experiment code also measures the duration of every call to the target library function (be it with or without PreFence enabled). We can use these measurements to evaluate the performance overhead of PreFence.
+
+To do so, run the script `plot_exp_openssl_time_compute.py`. This script again takes a `results.log` file, computes the median execution time of the library function with PreFence enabled and disabled, respectively, and prints the results. It also produces a histogram (which is currently not presented in the paper) and saves it in `plot_exp_openssl_time_compute_results.png`
 
 [^1]: Youngjoo Shin, Hyung Chan Kim, Dokeun Kwon, Ji Hoon Jeong, and Junbeom Hur. *Unveiling Hardware-based Data Prefetcher, a Hidden Source of Information Leakage.* In: Proceedings of the ACM SIGSAC Conference on Computer and Communications Security (CCS). 2018. https://doi.org/10.1145/3243734.3243736

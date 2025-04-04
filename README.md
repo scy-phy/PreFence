@@ -1,6 +1,6 @@
 # PreFence
 
-This repository contains the code artifact for the paper "A Scheduling-Aware Defense Against Prefetching-Based Side-Channel Attacks", to appear on arXiv as preprint.
+This repository contains the code artifact for our submission "PreFence: A Scheduling-Aware Defense Against Prefetching-Based Side-Channel Attacks", to appear at EuroS&P 2025.
 
 It comprises the following components:
 

